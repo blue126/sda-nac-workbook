@@ -782,9 +782,7 @@ apply 可能要半小时左右。在 `tmux` 里跑，避免终端关闭把 Terra
 - Border：`show ip bgp vpnv4 vrf CORP summary` 里到 fusion 的邻居（BCP-1 是 10.254.251.2，BCP-2 是 10.254.252.2）Established；`show ip route vrf CORP 192.168.1.0` 是从 fusion 学来的。
 - Fusion：`show ip bgp summary` 里 10.254.251.1、10.254.252.1 两个邻居 Established，`show ip bgp` 看到 10.254.100.0/24。
 
-设备上没配置时，先看 CatC 的审计日志（Activities → Audit Logs，或 `GET /dna/data/api/v1/event/event-series/audit-logs`）里有没有 `Service request processing has failed`。处理办法见排错记录。
-
-实测（2026-11-12）：两台 border 和 EDGE-2 一次下发成功；EDGE-1 因为 CatC 连不上设备而下发失败，前后折腾了约 1.5 小时才补上。
+设备上没配置时，先看 CatC 的审计日志（Activities → Audit Logs，或 `GET /dna/data/api/v1/event/event-series/audit-logs`）里有没有 `Service request processing has failed`。
 
 ---
 
@@ -886,5 +884,3 @@ sudo dhclient <fabric 侧网卡>
 | 2026-11-11 | 装 SD Access 包后 plan 报 `StatusCode 502`（`network-device`、`template-programmer/project`），System 360 却显示全部健康 | 安装还没结束（本实验整个安装约 55 分钟），安装流程停掉了 fusion 里的服务。Kibana 里 Kong 日志是 `connect() failed (111: Connection refused) while connecting to upstream`，inventory 服务最后一条日志是 `Stopping`。等 Release Activities 显示 Success 再跑；健康检查要带认证，未认证请求会被 Kong 直接回 401 |
 | 2026-11-12 | Stage 3：fabric site 报 `NCSO20572: Before creating a new Fabric Site ... enable wired client IP Device Tracking` | CatC 3.x 的新前置条件。building 的 `network_settings.telemetry.wired_data_collection: true`（Task 11） |
 | 2026-11-12 | Stage 3：edge 加入 fabric 报 `NCSO20573: Reprovisioning is required on device ... for applying wired client IP Device Tracking` | 设备在打开 IP Device Tracking 之前 provision 过。把 edge 的 `state` 临时改成 `REPROVISION` apply 一次，再改回 `PROVISION` |
-| 2026-11-12 | Stage 3：apply 成功，但 HQ-EDGE-1 上没有 VRF CORP、Vlan100、LISP；EDGE-2 正常 | 审计日志：`Service request processing has failed with error: Connection error on device 9.9.9.31`，下发那一刻 CatC 连不上设备，provider 不等下发结果，所以 apply 照样成功。`REPROVISION` 只会重推 provision 那部分配置，fabric 配置不会重推 |
-| 2026-11-12 | 把 EDGE-1 移出再加回 fabric（`terraform apply -replace=...edge_device["HQ-EDGE-1"]`），加回时报 `NCSO20148: The LISP configuration is already present on device` | 设备上其实没有 LISP 配置，是 CatC 缓存的设备配置还是旧的。强制 resync 后再 apply 就能加回去，但加回后 CatC 只推了清理命令，没推 fabric 配置。resync 被 provision 打断过几次（`NCIM12021`），等同步完成后，CatC 自动又跑了一次 Switch Fabric Provisioning，这次把配置推了下去，具体是什么触发的不清楚。经验：先确认设备 Reachable、inventory 是 Managed，再加 fabric 设备；遇到 NCSO20148 先 resync，等 Managed 之后再试 |
