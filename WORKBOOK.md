@@ -30,12 +30,12 @@
 
 | 项 | 值 |
 |---|---|
-| 仿真平台 | PNETLab `192.168.1.251`，lab 文件 `/opt/unetlab/labs/sda-workbook/sda-workbook-catc323.unl` |
-| 交换机镜像 | cat9kv-uadp；FUSION-1 为 IOL |
+| 仿真平台 | PNETLab `192.168.1.251`，lab 文件 `/opt/unetlab/labs/sda-workbook/sda-workbook-catc323.unl`；仓库副本 [lab/sda-workbook-catc323.unl](lab/sda-workbook-catc323.unl)（启动配置里的 `enable secret` 已换成 `CHANGEME`，导入后自行修改） |
+| 镜像 | 交换机 `cat9kvuadp-17.15.03`（4 vCPU / 18 GB）；FUSION-1 IOL `L3-AdvEnterpriseK9-M2 15.7(3)`；客户端 `linux-ubuntu-server-20.04`（需自备镜像） |
 | Catalyst Center | `https://192.168.1.133`（2.3.x） |
-| ISE | `192.168.1.221` |
+| ISE | `ise.ccie.local` / `192.168.1.221`（standalone，PAN/MnT/PSN/pxGrid 同一节点） |
 | 控制台 | `ssh ubuntu@192.168.1.251`，`~/con.py <port> <wait> "cmd" ...`（FUSION-1 = 30016） |
-| 域名 | `ccie.local` |
+| 域名 | `ccie.local`：家庭网关 dnsmasq 上有 `ise.ccie.local → 192.168.1.221`（CatC 集成 ISE 时要能解析 ISE 的 FQDN） |
 
 ### 地址规划
 
@@ -43,8 +43,9 @@
 |---|---|
 | 管理 / 共享服务 | 192.168.1.0/24 |
 | Fusion ↔ Border underlay | 10.0.1.0/30（BCP-1）、10.0.2.0/30（BCP-2） |
-| Fabric underlay 链路 | 172.x.x.x `[按现网补充]` |
-| Loopback0（RLOC） | 9.9.9.x `[按现网补充每台设备]` |
+| Border ↔ Intermediate | 172.16.11/12/21/22.0/24（BCP-1–IN-1、BCP-1–IN-2、BCP-2–IN-1、BCP-2–IN-2） |
+| Intermediate ↔ Edge | 172.17.11/12/21/22.0/24（IN-1–EN-1、IN-1–EN-2、IN-2–EN-1、IN-2–EN-2） |
+| Loopback0（RLOC） | BCP-1/2 9.9.9.11/.12，IN-1/2 9.9.9.21/.22，EDGE-1/2 9.9.9.31/.32 |
 | Global pool `SDA-Campus` | 10.254.0.0/16 |
 | VLAN 100 客户端（anycast GW .1） | 10.254.100.0/24 |
 | L3 handoff BCP-1 / BCP-2（VLAN 101 / 102） | 10.254.251.0/30、10.254.252.0/30 |
@@ -74,10 +75,62 @@ terraform apply stageN.tfplan
 ```
 
 - 不想把密码写进文件：`terraform.tfvars` 里不填用户名和密码，改用环境变量 `CC_USERNAME` / `CC_PASSWORD`（provider 只认这两个名字），可以从密码管理器临时取，例如 `CC_PASSWORD=$(bw get password <条目>) terraform plan ...`。
-- CatC 上已有同名对象时，加 `CC_ALLOW_EXISTING_ON_CREATE=true` 让 provider 接管而不是报错。
+- **本实验是 greenfield**：从一台刚部署好、只完成了 Task 1–6 的 CatC 开始，站点、地址池、fabric 等全部由 Terraform 创建，不在 GUI 里手工建。
 - `terraform.tfstate` 也已 gitignore：state 里有 CatC 返回的对象 ID 等信息，放进公开仓库不合适。
 
 > 注意：Terraform 要在沙箱外跑（Go TLS 不认沙箱代理证书，插件也起不来）。
+
+#### 模块怎么保证顺序：两道「闸」
+
+`terraform plan` 里会看到几个不对应任何 CatC 对象的资源：`terraform_data.before_fabric_template_deployments`、`terraform_data.fabric_configuration_complete` 和几个 `time_sleep`。`terraform_data` 是 Terraform 自带的空资源，只存在于 state 里，模块用它当**闸门**控制先后：
+
+```
+前置模板 → 闸 1 → 建 fabric → 闸 2 → 后置模板
+```
+
+**闸 1**：所有「建 fabric 之前要推的模板」推完，闸才开（[cc_templates.tf#L661-L665](https://github.com/netascode/terraform-catalystcenter-nac-catalystcenter/blob/v0.6.0/cc_templates.tf#L661-L665)）：
+
+```hcl
+resource "terraform_data" "before_fabric_template_deployments" {
+  input = {
+    for key, deployment in catalystcenter_deploy_template.regular_template_deploy_before_fabric : key => deployment.id
+  }
+}
+```
+
+fabric site 依赖这一道闸，不用逐个依赖每个模板部署（[cc_fabric.tf#L260-L267](https://github.com/netascode/terraform-catalystcenter-nac-catalystcenter/blob/v0.6.0/cc_fabric.tf#L260-L267)）：
+
+```hcl
+resource "catalystcenter_fabric_site" "fabric_site" {
+  # ...
+  depends_on = [ /* building、AAA 设置等 */, terraform_data.before_fabric_template_deployments]
+}
+```
+
+**闸 2**：fabric 的所有资源（transit、VN、anycast gateway、fabric 设备、L3 handoff……）建完，闸才开（[cc_fabric.tf#L1388-L1425](https://github.com/netascode/terraform-catalystcenter-nac-catalystcenter/blob/v0.6.0/cc_fabric.tf#L1388-L1425)）：
+
+```hcl
+resource "terraform_data" "fabric_configuration_complete" {
+  depends_on = [
+    catalystcenter_transit_network.transit,
+    catalystcenter_fabric_l3_virtual_network.l3_vn,
+    catalystcenter_anycast_gateway.anycast_gateway,
+    catalystcenter_fabric_device.border_device,
+    # ……共三十多项
+  ]
+}
+```
+
+「建 fabric 之后才推」的模板依赖闸 2，所以一定等 fabric 全部建完（[cc_templates.tf#L667-L709](https://github.com/netascode/terraform-catalystcenter-nac-catalystcenter/blob/v0.6.0/cc_templates.tf#L667-L709)）：
+
+```hcl
+resource "catalystcenter_deploy_template" "regular_template_deploy_after_fabric" {
+  # ...
+  depends_on = [ /* provision 等 */, terraform_data.fabric_configuration_complete]
+}
+```
+
+本实验没有模板，两道闸都是空的，一建就开。`time_sleep.provision_device_wait` 则是 provision 之后固定等一会儿，让 CatC 处理完任务。state 里那些 `*_validation` 也是 `terraform_data`，带 precondition，配置会造成危险改动（比如误删 VN）时让 plan 直接报错。
 
 ---
 
@@ -137,7 +190,7 @@ router bgp 650002
 
 ## Part 2 – 站点与网络设置（NaC）
 
-### ⏳ Task 7 – 网络层级
+### ✅ Task 7 – 网络层级
 
 **目标**：Area `USA` → Building `SDA-Campus`。
 
@@ -157,19 +210,39 @@ catalyst_center:
 
 **原理**：模块把树展开成 `Global/USA`、`Global/USA/SDA-Campus`。`managed_sites` 为空且 `manage_global_settings: false` 时，YAML 里出现的所有站点都会被管理。
 
-### ⬜ Task 8 – 集成 ISE
+### ✅ Task 8 – 集成 ISE
 
 **目标**：ISE 开 pxGrid，CatC 里加 ISE 为 AAA/PAN，重新 provision 后设备出现在 ISE 的 Network Devices 里。
 
-**NaC**：`[待写：读 cc_system_settings.tf 后补]`
+**NaC**：`ise.tf`（直接用 provider 资源，不走模块）
 
-### ⬜ Task 9 – Building 的 AAA 设置
+- `catalystcenter_authentication_policy_server`：把 ISE 加为 AAA/PAN，RADIUS 1812/1813，启用 pxGrid；`cisco_ise_dtos` 里带 ISE 的 FQDN 和管理员账号，CatC 用它登录 ISE 建立信任。
+- `catalystcenter_integrate_ise`：接受 ISE 证书，完成 pxGrid 握手。
+- 凭据来自 `terraform.tfvars` 的 `ise_*` 变量，变量声明为 `ephemeral`，并用 write-only 参数（`*_wo`）下发：值发给 CatC，但**不写进 state**。改了密码就把 `ise_secrets_version` 加 1。
+
+**为什么不用模块**：模块 0.6.0 在 `cc_system_settings.tf` 里组装了 ISE 的用户名、密码、FQDN（`local.cisco_ise_dtos`），但没有传给资源，结果 CatC 里有 ISE 条目却连不上 ISE。
+
+**前提**：ISE 上开启 pxGrid 服务；ISE 的 FQDN 能被 CatC 解析。
+
+**验证**：CatC → System → Settings → Authentication and Policy Servers，ISE 状态 ACTIVE；ISE → pxGrid Services 里 CatC 客户端已批准。Task 10 provision 之后，设备出现在 ISE 的 Network Devices 里。
+
+### ✅ Task 9 – Building 的 AAA 设置
 
 **目标**：SDA-Campus 的 client AAA 指向 ISE `192.168.1.221`。
 
-**NaC**：`[待写]`
+**NaC**：`data/02_aaa_devices.nac.yaml`
 
-### ⏳ Task 11 – IP 地址池
+```yaml
+            network_settings:
+              client_and_endpoint_aaa:
+                server_type: ISE
+                protocol: RADIUS
+                primary_ip: 192.168.1.221
+```
+
+只设 client/endpoint AAA（802.1X 认证用户和终端）；设备登录的 network AAA 本实验不配。ISE 必须先集成（Task 8），否则 CatC 拒绝把它设为 AAA。
+
+### ✅ Task 11 – IP 地址池
 
 **目标**：Global pool `SDA-Campus` 10.254.0.0/16，Building 下预留三个子池。
 
@@ -232,11 +305,31 @@ ip dns server
 
 **验证**：`show ip dhcp pool`；Task 17 之后 `show ip dhcp binding`。
 
-### ⬜ Task 10 – 设备分配到站点并 provision
+### ✅ Task 10 – 设备分配到站点并 provision
 
 **目标**：六台设备分配到 SDA-Campus 并 provision。
 
-**NaC**：`inventory.devices`（`name` 必填）`[待写：读 cc_device_provision.tf 后补]`
+**NaC**：`data/02_aaa_devices.nac.yaml` 的 `inventory.devices`
+
+| 设备 | 角色 | 状态 |
+|---|---|---|
+| HQ-BCP-1/2 | BORDER ROUTER | PROVISION |
+| HQ-EDGE-1/2 | ACCESS | PROVISION |
+| HQ-IN-1/2 | DISTRIBUTION | ASSIGN（只跑 underlay，分配到站点但不 provision） |
+
+- 模块按 CatC 里的 hostname 找设备。设备配了 `ip domain name ccie.local`，CatC 显示的是 `HQ-BCP-1.ccie.local`，所以用 `fqdn_name` 写全名，`name` 写短名。
+- `device_ip` 是发现时用的 Loopback0。
+- provision 会把站点的网络设置（AAA、DHCP/DNS 等）推到设备上，这一步之后设备出现在 ISE 的 Network Devices 里。
+
+**执行顺序**：AAA 依赖 ISE 已集成，首次先单独 apply ISE：
+
+```bash
+terraform apply -target=catalystcenter_integrate_ise.ise
+terraform plan -out stage2.tfplan
+terraform apply stage2.tfplan
+```
+
+**验证**：Inventory 里 4 台 fabric 节点 Provision Status 为 Success；`show run | s aaa|radius` 能看到 ISE。
 
 ---
 
@@ -354,6 +447,15 @@ sudo dhclient <fabric 侧网卡>
 
 ## 附加任务（可选）
 
+- **待探索：LAN Automation 做 underlay**。只手工配 border 作为种子设备，intermediate 和 edge 由 CatC 通过 PnP 自动生成 IS-IS underlay 并纳管，取代 Task 3–6 的手工部分；NaC 用模块的 `cc_lan_automation.tf`。需先验证 cat9kv 是否支持。
+
+- **待探索：全新 ISE 用 ZTP bootstrap**。ISE 3.1 起支持 Zero-Touch Provisioning：第一次开机前把 key=value 配置交给安装程序，跳过交互式 `setup`。本 lab 的 ISE 是装好后改 hostname / domain 的，所以踩了 pxGrid 证书 CN 不一致的坑（见排错记录）；用 ZTP 的话，主机名、内部 CA 和 pxGrid 证书一开始就是 `ise.ccie.local`，API 也直接开好。
+  1. **建 VM**：Terraform（`proxmox-vm` 模块）按 ISE 规格建 VM，挂安装 ISO。
+  2. **ZTP 配置**：常见字段 `hostname`、`ipv4_addr`、`ipv4_mask`、`ipv4_default_gw`、`domain`、`primarynameserver`、`ntpserver`、`timezone`、`username` / `password`，以及服务开关 `ersapi`、`openapi`、`pxGrid`、`pxGrid_Cloud`。打包成 `.img` 挂到**第二个光驱**，或者在 OVA / 云部署里用 user data 传入。密码不进 Git，和 `terraform.tfvars` 一样由用户填。
+  3. **起来之后**：策略对象（Task 20–23）用 `nac-ise` / `CiscoDevNet/ise` provider；persona、证书、多节点注册用 OpenAPI 或 Ansible `cisco.ise`；CatC 集成就是 `ise.tf`。仍需手工的主要是 license（评估版 90 天）。
+  - 注意：字段名和镜像文件名（`ise-ztp.img` / `ise_config.img`）因版本而异，以对应版本的安装指南为准；没找到 KVM / Proxmox 专门的 ZTP 步骤，`.img` 怎么挂需按安装指南 KVM 章节验证；社区报告过 VMware 上 UEFI 卡住、改 BIOS 才好。
+  - 参考：[ISE ZTP（Cisco Community）](https://community.cisco.com/t5/security-documents/ise-zero-touch-provisioning-ztp/ta-p/4541606)、[SNS VM 须知](https://community.cisco.com/t5/security-knowledge-base/ise-what-we-need-to-know-about-sns-vm/ta-p/5274022)、[Deploy ISE 3.4](https://www.cisco.com/c/en/us/support/docs/security/identity-services-engine-34/223285-deploy-identity-services-engine-ise.html)、[VMware ZTP 卡住](https://community.cisco.com/t5/network-access-control/ise-3-1-auto-install-on-vmware-with-iso-hangs/m-p/4871993)。
+
 - 第二个 VN `Guest`，只能访问 fusion 之外的一个地址；
 - 不支持 802.1X 的主机：用 host onboarding 给端口静态 SGT + open auth（不用 CLI）；
 - handoff 改为 VRF-aware，在 fusion 上选择性泄漏一条 GRT 路由进 fabric；
@@ -365,4 +467,7 @@ sudo dhclient <fabric 侧网卡>
 |---|---|---|
 | 2026-11-11 | `terraform plan`：Unable to find username | 运行 plan 的 shell 里没有 `CC_USERNAME`；provider 只认 `CC_*` 变量名 |
 | 2026-11-11 | apply 时 building 报 400 `NCND10502: Either latitude/longitude or address is ...` | CatC API 要求 building 带经纬度或地址；YAML 加 `latitude` / `longitude` |
+| 2026-11-11 | 作者环境里有之前在 GUI 手工建的 USA / SDA-Campus，与 greenfield 前提不符 | 一次性清理：`terraform destroy`，再在 GUI 删掉残留，回到干净状态后按正常流程重跑。（另一种做法是 provider 的 `allow_existing_on_create` 接管存量对象，属于 brownfield 迁移，本实验不用） |
 | 2026-11-11 | stage1.tfplan 只有 7 个 `terraform_data` | plan 中途出错（plan 文件里 `errored: true`），不是 YAML 没读到；要看 plan 的完整报错输出 |
+| 2026-11-11 | `catalystcenter_integrate_ise`：`WAITING_USER_INPUT ... certificate ... not yet trusted` | 时序问题：接受证书的请求在 CatC 进入等待确认状态之前就发出了。再 apply 一次即可 |
+| 2026-11-11 | `catalystcenter_integrate_ise`：`FQDN ise.ccie.local doesn't match the common name contained in the system certificate` | ISE 改过主机名，admin 证书（443）已是新 CN，但 pxGrid 证书（8910）仍是旧主机名，由旧的内部 CA 签发。ISE → Certificates → CSR → 用途选 ISE Root CA → Replace ISE Root CA Certificate chain；然后按报错要求重建 CatC 里的 ISE 条目：`terraform apply -replace='catalystcenter_authentication_policy_server.ise[0]' -target=catalystcenter_integrate_ise.ise`。检查方法：`openssl s_client -connect <ise>:8910` 看 CN |
