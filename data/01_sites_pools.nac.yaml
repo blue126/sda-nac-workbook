@@ -1,0 +1,41 @@
+---
+# Stage 1 (workbook Task 7 + Task 11): site hierarchy, global pool, building reservations.
+# Field names checked against module 0.6.0 source (cc_sites.tf, cc_network_settings.tf).
+catalyst_center:
+  sites:
+    global:
+      network_settings:
+        ip_pools:
+          # No gateway/DHCP/DNS at the global level; they are set on the reservation.
+          - name: SDA-Campus
+            ip_address_space: IPv4
+            ip_pool_cidr: 10.254.0.0/16
+    areas:
+      - name: USA
+        buildings:
+          - name: SDA-Campus
+            country: United States
+            # CatC rejects a building without lat/long or address (NCND10502).
+            # Placeholder: San Jose, CA.
+            latitude: 37.41
+            longitude: -121.95
+            network_settings:
+              ip_pools_reservations:
+                # Anycast gateway pool for VLAN 100. DHCP and DNS (forwarder to 192.168.1.1)
+                # run on FUSION-1 e0/0, i.e. shared services outside the fabric, reached via the L3 handoff.
+                - name: SDA-Campus-VLAN-100
+                  global_pool: SDA-Campus
+                  subnet: 10.254.100.0
+                  prefix_length: 24
+                  gateway: 10.254.100.1
+                  dhcp_servers: [192.168.1.99]
+                  dns_servers: [192.168.1.99]
+                # /30 transfer links for the border-to-fusion L3 handoff (Task 15).
+                - name: SDA-Campus-L3-Handoff-1
+                  global_pool: SDA-Campus
+                  subnet: 10.254.251.0
+                  prefix_length: 30
+                - name: SDA-Campus-L3-Handoff-2
+                  global_pool: SDA-Campus
+                  subnet: 10.254.252.0
+                  prefix_length: 30

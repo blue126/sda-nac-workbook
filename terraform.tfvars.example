@@ -1,0 +1,4 @@
+# Copy to terraform.tfvars (gitignored) and fill in. Never commit the real file.
+catalystcenter_url      = "https://192.168.1.133"
+catalystcenter_username = "<CatC admin user>"
+catalystcenter_password = "<CatC admin password>"
