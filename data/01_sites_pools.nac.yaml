@@ -4,16 +4,19 @@
 # Field names checked against module 0.6.0 source (cc_sites.tf, cc_network_settings.tf,
 # cc_system_settings.tf).
 catalyst_center:
-  # Task 10: integrate ISE. username, password and shared_secret come from terraform.tfvars
-  # (merged in main.tf), never from this file. With *_version set the module uses
-  # write-only arguments, so the secrets are not stored in state. Bump the version after
-  # changing a secret.
+  # Task 10: integrate ISE. Credentials come from environment variables (!env, see
+  # .env.example), never from this file. With *_version set the module uses write-only
+  # arguments, so the secrets are not stored in state. Bump the version after changing
+  # a secret.
   system_settings:
     authentication_and_policy_servers:
       ise:
         ip_address: 192.168.1.221
         fqdn: ise.ccie.local
+        username: !env ISE_USERNAME
+        password: !env ISE_PASSWORD
         password_version: 1
+        shared_secret: !env ISE_SHARED_SECRET
         shared_secret_version: 1
         pxgrid_enabled: true
         retries: 3

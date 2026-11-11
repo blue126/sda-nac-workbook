@@ -34,61 +34,47 @@ provider "catalystcenter" {
   max_timeout = 600
 }
 
-# Build stage (see WORKBOOK). Stage N loads the YAML files of stages 1..N, so a fresh
-# clone can be built step by step: terraform plan -var stage=1, then 2, then 3.
+# Build stage (see WORKBOOK). Stage N loads the YAML files of stages 0..N, so a fresh
+# clone can be built step by step: terraform plan -var stage=0, then 1, 2, 3.
 # Never lower it on an existing build: the missing stages would be planned for destroy.
 variable "stage" {
   type    = number
   default = 3
   validation {
-    condition     = contains([1, 2, 3], var.stage)
-    error_message = "stage must be 1, 2 or 3."
+    condition     = contains([0, 1, 2, 3], var.stage)
+    error_message = "stage must be 0, 1, 2 or 3."
   }
 }
 
 locals {
-  stage_files = [
-    "data/01_sites_pools.nac.yaml", # Stage 1: Tasks 8-10
-    "data/02_aaa_devices.nac.yaml", # Stage 2: Tasks 11-12
-    "data/03_fabric.nac.yaml",      # Stage 3: Tasks 13-17
+  # Files per stage. nac-catalystcenter and nac-iosxe each need their own files
+  # (a YAML file may hold only one of catalyst_center / iosxe).
+  stages = [
+    { catc = [], iosxe = ["data/00_fusion.nac.yaml"] },                                  # Stage 0
+    { catc = ["data/01_sites_pools.nac.yaml"], iosxe = [] },                             # Stage 1
+    { catc = ["data/02_aaa_devices.nac.yaml"], iosxe = [] },                             # Stage 2
+    { catc = ["data/03_fabric.nac.yaml"], iosxe = ["data/03_fusion_handoff.nac.yaml"] }, # Stage 3
   ]
-}
-
-# Task 10: ISE credentials, kept in terraform.tfvars like the CatC ones. They are merged
-# into the YAML model (data/01 holds the rest of the ISE settings). The module passes
-# them to write-only arguments, so they are not stored in state; they do end up in
-# saved .tfplan files (gitignored, delete after apply). Not marked sensitive because a
-# sensitive value would make the whole merged model sensitive and break the module's
-# for_each loops; the module wraps the password and secret in sensitive() itself.
-variable "ise_username" {
-  type = string
-}
-
-variable "ise_password" {
-  type = string
-}
-
-variable "ise_shared_secret" {
-  type = string
+  catc_files  = flatten([for s in slice(local.stages, 0, var.stage + 1) : s.catc])
+  iosxe_files = flatten([for s in slice(local.stages, 0, var.stage + 1) : s.iosxe])
 }
 
 module "catalyst_center" {
   source  = "netascode/nac-catalystcenter/catalystcenter"
   version = "0.6.0"
 
-  yaml_files = slice(local.stage_files, 0, var.stage)
-  model = {
-    catalyst_center = {
-      system_settings = {
-        authentication_and_policy_servers = {
-          ise = {
-            username      = var.ise_username
-            password      = var.ise_password
-            shared_secret = var.ise_shared_secret
-          }
-        }
-      }
-    }
-  }
+  yaml_files = local.catc_files
+  # An empty catalyst_center model keeps the module valid at Stage 0, when it has no files.
+  model = { catalyst_center = {} }
 }
 
+# FUSION-1 (Catalyst 8000V, outside Catalyst Center) over NETCONF: data/00 (Stage 0) and
+# data/03_fusion_handoff (Stage 3).
+# Credentials: IOSXE_USERNAME / IOSXE_PASSWORD environment variables only.
+module "iosxe" {
+  source  = "netascode/nac-iosxe/iosxe"
+  version = "1.0.0"
+
+  yaml_files  = local.iosxe_files
+  save_config = true
+}

@@ -7,17 +7,18 @@ and YAML data files.
 - **[WORKBOOK.md](WORKBOOK.md)** – the lab guide (Chinese): topology, addressing, and every task with goal, reasoning, config and verification.
 - `main.tf` – provider and module wiring; the `stage` variable selects which YAML files are loaded.
 - `data/*.nac.yaml` – the fabric, one file per stage.
-- `ansible/` – the fusion router (outside Catalyst Center).
+- `data/00_fusion.nac.yaml`, `data/03_fusion_handoff.nac.yaml` – the fusion router (Catalyst 8000V, outside Catalyst Center), managed with [`netascode/nac-iosxe`](https://registry.terraform.io/modules/netascode/nac-iosxe/iosxe).
 
 Tasks are ordered by build stage. The topology is based on Mason Reimert's SDA workbook v1.0; all values here match the author's own PNETLab lab.
 
 ## Quick start
 
 ```bash
-cp terraform.tfvars.example terraform.tfvars   # fill in Catalyst Center credentials
+cp .env.example .env              # fill in all credentials (gitignored)
+set -a; source .env; set +a
 terraform init
-terraform plan -var stage=1 -out stage1.tfplan   # then stage=2, stage=3
-terraform apply stage1.tfplan
+terraform plan -var stage=0 -out stage0.tfplan   # then stage=1, 2, 3
+terraform apply stage0.tfplan
 ```
 
-`terraform.tfvars` and state files are gitignored.
+`.env`, `terraform.tfvars` and state files are gitignored.

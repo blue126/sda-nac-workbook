@@ -14,6 +14,10 @@ catalyst_center:
                 server_type: ISE
                 protocol: RADIUS
                 primary_ip: 192.168.1.221
+              # Wired client data collection (IP Device Tracking). Catalyst Center refuses to
+              # create a fabric site or add fabric devices without it (NCSO20572).
+              telemetry:
+                wired_data_collection: true
 
   inventory:
     # name = CatC hostname without the domain; fqdn_name = hostname as CatC shows it

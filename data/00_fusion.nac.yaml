@@ -1,0 +1,89 @@
+---
+# Stage 0 (workbook Task 2 + DHCP/DNS): FUSION-1, a Catalyst 8000V outside Catalyst
+# Center, managed with the nac-iosxe module over NETCONF. Credentials come from the
+# IOSXE_USERNAME / IOSXE_PASSWORD environment variables (the only way nac-iosxe takes
+# them). The L3 handoff to the borders is in data/03 (Stage 3).
+iosxe:
+  templates:
+    # Not modelled by nac-iosxe 1.0.0: pushed as raw CLI.
+    - name: fusion-dhcp-dns
+      type: cli
+      content: |
+        ip dhcp excluded-address 10.254.100.1 10.254.100.9
+        ip dns server
+
+  devices:
+    - name: FUSION-1
+      host: 192.168.1.99
+      templates: [fusion-dhcp-dns]
+      configuration:
+        system:
+          hostname: FUSION-1
+          ip_domain_name: ccie.local
+          ip_domain_lookup: true
+          ip_name_servers: [192.168.1.1]
+
+        interfaces:
+          ethernets:
+            - type: GigabitEthernet
+              id: "1"
+              description: TO-LAN (management and shared services)
+              ipv4:
+                address: 192.168.1.99
+                address_mask: 255.255.255.0
+            - type: GigabitEthernet
+              id: "2"
+              description: TO-HQ-BCP-1
+              ipv4:
+                address: 10.0.1.1
+                address_mask: 255.255.255.0
+            - type: GigabitEthernet
+              id: "3"
+              description: TO-HQ-BCP-2
+              ipv4:
+                address: 10.0.2.1
+                address_mask: 255.255.255.0
+
+        routing:
+          static_routes:
+            - prefix: 0.0.0.0
+              mask: 0.0.0.0
+              next_hops:
+                - ip: 192.168.1.1
+            # Fabric loopbacks summary: discard anything not learned from the borders.
+            - prefix: 9.9.9.0
+              mask: 255.255.255.0
+              next_hops:
+                - interface_type: "Null"
+                  interface_id: "0"
+          # Task 2: underlay eBGP to both borders in the global table.
+          bgp:
+            as_number: 650002
+            log_neighbor_changes: true
+            neighbors:
+              - ip: 10.0.1.2
+                remote_as: 650003
+                description: HQ-BCP-1 underlay
+              - ip: 10.0.2.2
+                remote_as: 650003
+                description: HQ-BCP-2 underlay
+            address_family:
+              ipv4_unicast:
+                # Classful /24: IOS stores it without a mask, so none is given here
+                # (with a mask the plan would never converge).
+                networks:
+                  - network: 192.168.1.0
+                neighbors:
+                  - ip: 10.0.1.2
+                  - ip: 10.0.2.2
+
+        # DHCP for the CORP VLAN 100 clients (edge relays with option 82).
+        dhcp_pools:
+          - name: CORP-VLAN-100
+            network_number: 10.254.100.0
+            network_mask: 255.255.255.0
+            default_routers: [10.254.100.1]
+            dns_servers: [192.168.1.99]
+            domain_name: ccie.local
+            lease_days: 0
+            lease_hours: 12

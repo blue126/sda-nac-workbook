@@ -1,0 +1,40 @@
+---
+# Stage 3, read by the nac-iosxe module (a file may hold only one of iosxe / catalyst_center).
+# Task 16, fusion side of the L3 handoff: sub-interfaces and eBGP peerings on FUSION-1.
+# Addresses must match local_ip_address (border) / peer_ip_address (fusion) in
+# data/03_fabric.nac.yaml.
+# The fusion side is not VRF-aware: all global routes are leaked into the CORP VN.
+iosxe:
+  devices:
+    - name: FUSION-1
+      configuration:
+        interfaces:
+          ethernets:
+            - type: GigabitEthernet
+              id: "2.101"
+              description: L3 handoff CORP to HQ-BCP-1
+              encapsulation_dot1q_vlan_id: 101
+              ipv4:
+                address: 10.254.251.2
+                address_mask: 255.255.255.252
+            - type: GigabitEthernet
+              id: "3.102"
+              description: L3 handoff CORP to HQ-BCP-2
+              encapsulation_dot1q_vlan_id: 102
+              ipv4:
+                address: 10.254.252.2
+                address_mask: 255.255.255.252
+        routing:
+          bgp:
+            neighbors:
+              - ip: 10.254.251.1
+                remote_as: 650003
+                description: HQ-BCP-1 handoff CORP
+              - ip: 10.254.252.1
+                remote_as: 650003
+                description: HQ-BCP-2 handoff CORP
+            address_family:
+              ipv4_unicast:
+                neighbors:
+                  - ip: 10.254.251.1
+                  - ip: 10.254.252.1

@@ -1,5 +1,5 @@
 ---
-# Stage 3 (workbook Tasks 13-17). FUSION-1 side: Task 7 (Stage 0), ansible/fusion_handoff.yml.
+# Stage 3 (workbook Tasks 13-17). FUSION-1 side: data/03_fusion_handoff.nac.yaml.
 # Field names checked against module 0.6.0 (cc_fabric.tf) and provider 0.6.6 schema.
 catalyst_center:
   fabric:

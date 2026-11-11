@@ -1,6 +1,6 @@
 # SD-Access Lab Workbook（Network as Code 版）
 
-用 Catalyst Center + ISE 搭一个 SD-Access fabric。CatC 上的配置（Task 8 起）不点 GUI，用 Terraform 模块 `netascode/nac-catalystcenter` 0.6.0 加 YAML 下发；CatC 管不到的 fusion 用 Ansible。任务按 NaC 的阶段排列：每个阶段一个配置文件、一次 apply。**所有参数以现网为准**。拓扑参考 Mason Reimert 的 SDA workbook v1.0。
+用 Catalyst Center + ISE 搭一个 SD-Access fabric。CatC 上的配置（Task 8 起）不点 GUI，用 Terraform 模块 `netascode/nac-catalystcenter` 0.6.0 加 YAML 下发；CatC 管不到的 fusion（Catalyst 8000V）用 `netascode/nac-iosxe` 模块。任务按 NaC 的阶段排列：每个阶段一个配置文件、一次 apply。**所有参数以现网为准**。拓扑参考 Mason Reimert 的 SDA workbook v1.0。
 
 状态：✅ 完成 ⏳ 进行中 ⬜ 未开始
 
@@ -8,22 +8,51 @@
 
 ### 拓扑
 
-```
-            网关 192.168.1.1（上网 / DNS 服务器）
-                         │ 192.168.1.0/24（CatC .133、ISE .221、PNETLab .251）
-                    e0/0 │ .99
-                    ┌──────────┐
-                    │ FUSION-1 │ AS 650002，DHCP / DNS 转发
-                    └──────────┘
-          e0/1 10.0.1.1 │      │ e0/2 10.0.2.1
-                        │      │（BGP，GRT）
-             HQ-BCP-1 ──┘      └── HQ-BCP-2      Border + Control Plane，AS 650003
-                 │    ╲      ╱    │
-             HQ-IN-1        HQ-IN-2              Intermediate（只跑 underlay）
-                 │    ╱      ╲    │
-             HQ-EDGE-1        HQ-EDGE-2          Edge
-                 │                │
-              WS-1-bob         WS-2-joe          Linux 客户端（802.1X）
+地址见下面的「地址规划」。
+
+```mermaid
+flowchart TB
+    GW["网关<br/>上网 / DNS 服务器"]
+    MGMT(("管理网段<br/>CatC · ISE · PNETLab"))
+    FUS["FUSION-1<br/>C8000V · AS 650002<br/>DHCP / DNS 转发"]
+
+    subgraph FABRIC["SD-Access fabric · SDA-Campus"]
+        BCP1["HQ-BCP-1<br/>Border + CP · AS 650003"]
+        BCP2["HQ-BCP-2<br/>Border + CP · AS 650003"]
+        IN1["HQ-IN-1<br/>Intermediate"]
+        IN2["HQ-IN-2<br/>Intermediate"]
+        EN1["HQ-EDGE-1<br/>Edge"]
+        EN2["HQ-EDGE-2<br/>Edge"]
+    end
+
+    WS1["WS-1-bob<br/>802.1X 客户端"]
+    WS2["WS-2-joe<br/>802.1X 客户端"]
+
+    GW --- MGMT
+    MGMT ---|"Gi1"| FUS
+    FUS ---|"Gi2 — Gi1/0/1<br/>underlay GRT + VLAN 101 handoff"| BCP1
+    FUS ---|"Gi3 — Gi1/0/1<br/>underlay GRT + VLAN 102 handoff"| BCP2
+    BCP1 --- IN1
+    BCP1 --- IN2
+    BCP2 --- IN1
+    BCP2 --- IN2
+    IN1 --- EN1
+    IN1 --- EN2
+    IN2 --- EN1
+    IN2 --- EN2
+    EN1 --- WS1
+    EN2 --- WS2
+
+    classDef ext fill:#eef2f7,stroke:#7a8699,color:#1f2937
+    classDef border fill:#dbeafe,stroke:#2563eb,color:#1e3a8a
+    classDef inter fill:#f3f4f6,stroke:#6b7280,color:#111827
+    classDef edge fill:#dcfce7,stroke:#16a34a,color:#14532d
+    classDef host fill:#fef3c7,stroke:#d97706,color:#78350f
+    class GW,MGMT,FUS ext
+    class BCP1,BCP2 border
+    class IN1,IN2 inter
+    class EN1,EN2 edge
+    class WS1,WS2 host
 ```
 
 ### 平台
@@ -31,7 +60,7 @@
 | 项 | 值 |
 |---|---|
 | 仿真平台 | PNETLab，lab 文件 `/opt/unetlab/labs/sda-workbook/sda-workbook-catc323.unl`；仓库副本 [lab/sda-workbook-catc323.unl](lab/sda-workbook-catc323.unl)（启动配置里的 `enable secret` 已换成 `CHANGEME`，导入后自行修改） |
-| 镜像 | 交换机 `cat9kvuadp-17.15.03`（4 vCPU / 18 GB）；FUSION-1 IOL `L3-AdvEnterpriseK9-M2 15.7(3)`；客户端 `linux-ubuntu-server-20.04`（需自备镜像） |
+| 镜像 | 交换机 `cat9kvuadp-17.15.03`（4 vCPU / 18 GB）；FUSION-1 `c8000v-17.16.01a`（2 vCPU / 4 GB）；客户端 `linux-ubuntu-server-20.04`（需自备镜像） |
 | Catalyst Center | 3.2.3 |
 | ISE | 3.3.0，主机名 `ise.ccie.local`（standalone，PAN/MnT/PSN/pxGrid 同一节点） |
 | 域名 | `ccie.local`。DNS 服务器上要有 ISE 的 A 记录，CatC 集成 ISE 时用 FQDN（Task 10） |
@@ -42,7 +71,7 @@
 |---|---|
 | 管理 / 共享服务 | 192.168.1.0/24 |
 | ├ 网关（上网、DNS 服务器） | 192.168.1.1 |
-| ├ FUSION-1 e0/0 | 192.168.1.99 |
+| ├ FUSION-1 Gi1 | 192.168.1.99（也是 NETCONF 管理地址） |
 | ├ Catalyst Center | 192.168.1.133（GUI 和 API：`https://192.168.1.133`） |
 | ├ ISE（`ise.ccie.local`） | 192.168.1.221 |
 | └ PNETLab | 192.168.1.251 |
@@ -60,9 +89,8 @@
 |---|---|
 | Terraform | ≥ 1.15（本机 1.17.1） |
 | Provider | `CiscoDevNet/catalystcenter` ~> 0.6.6 |
-| 模块 | `netascode/nac-catalystcenter/catalystcenter` 0.6.0 |
+| 模块 | `netascode/nac-catalystcenter/catalystcenter` 0.6.0；`netascode/nac-iosxe/iosxe` 1.0.0（provider `CiscoDevNet/iosxe`，NETCONF） |
 | 校验 | `nac-validate data/`（无 schema 时只查语法） |
-| Ansible | ansible-core 2.21，collection `cisco.ios`、`ansible.netcommon`，SSH 用 paramiko |
 
 ---
 
@@ -72,13 +100,39 @@
 
 | 文件 | 作用 |
 |---|---|
-| `main.tf` | 连接 CatC 的 provider；调用 NaC 模块并告诉它读哪些 YAML（由变量 `stage` 控制，见「怎么分」）；把 `terraform.tfvars` 里的 ISE 凭据交给模块 |
-| `data/0N_*.nac.yaml` | 每个阶段一个 YAML，描述要在 CatC 上建什么 |
-| `terraform.tfvars.example` | 凭据模板；复制成 `terraform.tfvars` 再填（已 gitignore） |
-| `ansible/` | CatC 管不到的设备（FUSION-1） |
+| `main.tf` | 连接 CatC 的 provider；调用两个 NaC 模块（CatC 和 FUSION-1）并告诉它们读哪些 YAML（由变量 `stage` 控制，见「怎么分」） |
+| `data/0N_*.nac.yaml` | 每个阶段的 YAML：`catalyst_center:` 开头的给 nac-catalystcenter，`iosxe:` 开头的（`00_fusion`、`03_fusion_handoff`）给 nac-iosxe。一个文件只能有其中一种 |
+| `.env.example` | 所有密码的模板；复制成 `.env` 再填（已 gitignore），运行 Terraform 前 `source` |
+| `terraform.tfvars.example` | 非敏感参数（CatC 地址），可选 |
 | `lab/` | PNETLab 拓扑文件 |
 
 YAML 只写「想要的状态」。模块把 YAML 翻译成 provider 资源，Terraform 把它和 state（上次建成的样子）对比，算出要新增、修改或删除什么，再调 CatC API 执行。
+
+### Provider 和模块
+
+两者是两层：**provider 是 Terraform 和某个平台对话的驱动，模块是写好的一套资源组合**。
+
+| | Provider | 模块（module） |
+|---|---|---|
+| 是什么 | 插件程序（Go 编译的二进制） | 一个装满 `.tf` 文件的目录（HCL） |
+| 管什么 | 怎么调某个平台的 API：登录、建对象、读回状态 | 建哪些资源、它们之间的先后、参数从哪来 |
+| 提供什么 | 资源类型，例如 `catalystcenter_building`、`iosxe_bgp_neighbor` | 一套组合好的资源，加上对外的输入（`variable`） |
+| 本实验 | `CiscoDevNet/catalystcenter`（CatC REST API）、`CiscoDevNet/iosxe`（设备 NETCONF） | `netascode/nac-catalystcenter`、`netascode/nac-iosxe` |
+| 下载到 | `.terraform/providers/` | `.terraform/modules/` |
+
+- **只用 provider 也能干活**：直接写 `resource "catalystcenter_building" ...`，每个参数、每个依赖自己写。
+- **模块在 provider 之上再包一层**：NaC 模块读 YAML，翻译成几十上百个 provider 资源，并写好资源之间的 `depends_on`（例如 Stage 2 构建里讲的两道闸）。你描述「要什么」，不用管「调哪个资源、按什么顺序」。
+- **模块自己不和设备通信**：它最终生成的还是 provider 资源，真正发 API 请求的始终是 provider。
+
+类比 Ansible：provider 相当于连接插件加 `cisco.ios` 里的 `ios_config` 这类模块，Terraform 的模块相当于一个写好的 role。
+
+**凭据走哪一层**，是这层关系最容易绕晕的地方：
+
+- **provider 的登录凭据**：一般在根目录 `main.tf` 的 `provider` 块里配，模块沿用。CatC 就是这样，nac-catalystcenter 模块里没有 provider 块；provider 也能直接读环境变量 `CC_USERNAME` / `CC_PASSWORD`。
+- **例外**：nac-iosxe 在模块**内部**自己写了 `provider "iosxe"` 块，根目录的配置进不去，凭据只能走 provider 自己读的环境变量 `IOSXE_USERNAME` / `IOSXE_PASSWORD`。
+- **资源参数里的密码**：ISE 的管理员密码和 RADIUS 共享密钥不是 provider 登录用的，而是 CatC 拿去登录 ISE 的参数，所以要走模块的输入：YAML 里用 `!env ISE_PASSWORD` 从环境变量读，由模块交给 provider 资源。
+
+三类都是环境变量，所以所有密码统一放在 gitignore 的 `.env` 里（模板 `.env.example`），运行 Terraform 前加载：`set -a; source .env; set +a`。环境变量不会写进 state，也不会写进 `.tfplan`。
 
 ### 为什么分阶段
 
@@ -92,10 +146,10 @@ Terraform 按资源之间的依赖排顺序，没有依赖的资源并行创建�
 
 | Stage | Task | 配置文件 | Plan 文件 |
 |---|---|---|---|
-| Stage 0 | Task 1–6 underlay 与纳管；Task 7 fusion handoff | 设备上手工 CLI；Task 7 用 `ansible/fusion_handoff.yml` | —（Ansible 用 `--check --diff` 预览） |
+| Stage 0 | Task 1–6 underlay 与纳管；Task 7 FUSION-1 | 交换机上手工 CLI；FUSION-1 用 `data/00_fusion.nac.yaml`（nac-iosxe） | `stage0.tfplan` |
 | Stage 1 | Task 8 网络层级、Task 9 地址池、Task 10 集成 ISE | `data/01_sites_pools.nac.yaml` | `stage1.tfplan` |
 | Stage 2 | Task 11 AAA、Task 12 设备分配和 provision | `data/02_aaa_devices.nac.yaml` | `stage2.tfplan` |
-| Stage 3 | Task 13–17 transit、VN、fabric site、设备角色、anycast gateway | `data/03_fabric.nac.yaml` | `stage3.tfplan` |
+| Stage 3 | Task 13–17 transit、VN、fabric site、设备角色、anycast gateway | `data/03_fabric.nac.yaml` + `data/03_fusion_handoff.nac.yaml`（fusion 一侧） | `stage3.tfplan` |
 | Stage 4 | Task 18–25 微分段与身份 | 待定（CatC 部分 + `nac-ise`） | — |
 
 ### 每个阶段怎么做
@@ -112,36 +166,31 @@ terraform plan -var stage=N                      # 4. 确认 No changes
 - 第 3 步用存下来的 plan 文件，保证执行的就是第 2 步看过的内容。
 - **已经建好的环境不要把 `stage` 调小**：少读的文件里的对象会被 plan 成删除。第 2 步看到 destroy 就停下。
 - `*.tfplan` 已 gitignore，apply 后就过期（state 变了 Terraform 会拒绝再用），可随时删除。
-- 每个阶段的前提、plan 里应该出现什么、apply 之后怎么验证，写在每个 Stage 末尾的「构建」里。第一次用 Terraform 前要准备 `terraform.tfvars` 并 `terraform init`，步骤在「构建（Stage 1）」。
+- 每个阶段的前提、plan 里应该出现什么、apply 之后怎么验证，写在每个 Stage 末尾的「构建」里。第一次用 Terraform 前要准备 `.env` 并 `terraform init`，步骤在「构建（Stage 0）」。
 
 ### 约定
 
 - **greenfield**：从一台刚部署好、只完成了 Stage 0 的 CatC 开始，站点、地址池、fabric 等全部由 Terraform 创建，不在 GUI 里手工建。
-- **凭据不进仓库**：密码只放在 gitignore 的 `terraform.tfvars`。CatC 的账号也可以不写文件，改用环境变量 `CC_USERNAME` / `CC_PASSWORD`（provider 只认这两个名字）。
+- **凭据不进仓库**：所有密码只放在 gitignore 的 `.env`（见「Provider 和模块」）。
 - **state 不进仓库**：`terraform.tfstate` 已 gitignore，里面有 CatC 返回的对象 ID 等信息，放进公开仓库不合适。
 
 ---
 
-## Stage 0 – Underlay、设备纳管与 fusion handoff（CLI / Ansible）
+## Stage 0 – Underlay、设备纳管与 FUSION-1（CLI / NaC）
 
 ### ✅ Task 1 – 数据中心路由
 
 **目标**：共享服务网段能被 fusion 学到。
 
-共享服务（CatC、ISE）直接在管理网段 192.168.1.0/24，FUSION-1 e0/0 接入，默认路由指向 192.168.1.1，BGP 里 `network 192.168.1.0` 宣告。
+共享服务（CatC、ISE）直接在管理网段 192.168.1.0/24，FUSION-1 Gi1 接入，默认路由指向 192.168.1.1，BGP 里宣告 192.168.1.0/24。fusion 一侧的配置在 Task 7 的 `data/00` 里。
 
 ### ✅ Task 2 – Fusion 路由
 
 **目标**：Fusion（AS 650002）和两台 border（AS 650003）在 GRT 建 eBGP，只做 underlay 可达，不涉及 overlay VN。
 
-```
-router bgp 650002
- network 192.168.1.0
- neighbor 10.0.1.2 remote-as 650003
- neighbor 10.0.2.2 remote-as 650003
-```
+fusion 一侧由 Task 7 的 `data/00` 下发；border 一侧（`router bgp 650003`，邻居 10.0.1.1 / 10.0.2.1）在 border 上手工 CLI。
 
-**验证**：`show ip bgp summary`，两个邻居 Established。
+**验证**：fusion 上 `show ip bgp summary`，两个邻居 Established。
 
 ### ✅ Task 3 – Fabric 内部 underlay
 
@@ -174,82 +223,160 @@ router bgp 650002
 
 **现网**：六台都在 inventory 里（BCP-1/2、IN-1/2、EDGE-1/2）。
 
-### ⬜ Task 7 – Fusion 侧 handoff（Ansible）
+### ✅ Task 7 – FUSION-1（Catalyst 8000V，nac-iosxe）
 
-*handoff 地址在 `data/03` 里写死（border .1、fusion .2），所以 fusion 一侧可以在 fabric 建好之前配。BGP 会话在 Stage 3 apply 之前保持 Idle/Active，属正常。*
+**目标**：fusion 用 NaC 管理：管理网段接入、默认路由、和两台 border 的 underlay eBGP、给 fabric 客户端的 DHCP 和 DNS 转发。到 border 的 L3 handoff（子接口和 VRF CORP 的邻居）在 Stage 3（Task 16）。
 
-**目标**：FUSION-1 上建 .101 / .102 子接口，和两台 border 建 eBGP。fusion 侧不做 VRF：GRT 的路由全部漏进 CORP VN。
+**为什么是 C8000V**：fusion 在 fabric 外，CatC 不管它。NaC 管 IOS-XE 用 `netascode/nac-iosxe` 模块，底层的 `CiscoDevNet/iosxe` provider 走 NETCONF（或 RESTCONF），需要 IOS-XE 17.x；经典 IOS（IOL 15.x）两者都没有。
 
-**为什么用 Ansible 而不是 NaC 模块**：FUSION-1 在 fabric 外，是 IOL 15.7，CatC 不支持纳管，模块管不到；它也没有 RESTCONF / NETCONF，用不了 `CiscoDevNet/iosxe` provider。所以用 Ansible `cisco.ios` 走 SSH。
+**Day-0 bootstrap（console，一次性）**：NaC 要靠 NETCONF 连设备，而设备得先有管理地址、账号和 NETCONF，这一步只能在 console 上做。
 
-**文件**：`ansible/`
-
-| 文件 | 内容 |
-|---|---|
-| `inventory.yml` | FUSION-1 `192.168.1.99`，`network_cli` + `cisco.ios.ios`；用户名取环境变量 `FUSION_USER`，密码运行时输入，不进仓库 |
-| `host_vars/FUSION-1.yml` | 两条 handoff 的接口、VLAN、地址、AS 号，必须和 `data/03` 里写死的地址一致 |
-| `fusion_handoff.yml` | `ios_config` 建子接口，`ios_bgp_global`（merged）加邻居，保存配置；带 `verify` 标签的最后一步等两个 BGP 会话 Established，默认不跑，Stage 3 之后再跑 |
-| `requirements.yml` | `cisco.ios`、`ansible.netcommon`，装在全局 `~/.ansible/collections` |
-
-```yaml
-# host_vars/FUSION-1.yml（节选）
-l3_handoffs:
-  - parent: Ethernet0/1          # to HQ-BCP-1 Gi1/0/1
-    vlan: 101
-    local_ip: 10.254.251.2
-    border_ip: 10.254.251.1
-    mask: 255.255.255.252
-```
-
-```yaml
-# fusion_handoff.yml（节选）
-- name: eBGP neighbor per border
-  cisco.ios.ios_bgp_global:
-    config:
-      as_number: "{{ bgp_asn }}"
-      neighbors:
-        - neighbor_address: "{{ item.border_ip }}"
-          remote_as: "{{ fabric_asn }}"
-    state: merged
-  loop: "{{ l3_handoffs }}"
-```
-
-**前提（一次性）**：
-
-1. FUSION-1 开 SSH（console 上手工配，用户名和密码自己定，不写进仓库）：
+1. 首次开机问 `Would you like to enter the initial configuration dialog?` 答 `no`。17.x 随后要求设置 enable secret（自己定），设完选 `2` 保存退出。
+2. 建本地账号，用户名和密码就是 `.env` 里的 `IOSXE_USERNAME` / `IOSXE_PASSWORD`：
 
    ```
+   enable
+   configure terminal
+   username <用户> privilege 15 secret <密码>
+   ```
+
+3. 其余不含凭据的部分（账号建好之后再开 AAA，否则 console 会被锁在外面）：
+
+   ```
+   pnpa service discovery stop          ! exec 模式；停掉开机自带的 PnP 发现
+   configure terminal
+   hostname FUSION-1
    ip domain name ccie.local
+   interface GigabitEthernet1
+    ip address 192.168.1.99 255.255.255.0
+    no shutdown
+   exit
+   ip route 0.0.0.0 0.0.0.0 192.168.1.1
    crypto key generate rsa modulus 2048
    ip ssh version 2
-   username <用户> privilege 15 secret <密码>
    line vty 0 4
-    login local
     transport input ssh
+   exit
+   aaa new-model
+   aaa authentication login default local
+   aaa authorization exec default local
+   netconf-yang
+   end
+   write memory
    ```
 
-2. 装依赖：`network_cli` 需要 paramiko 或 ansible-pylibssh。
+   `crypto key generate` 要跑一会儿，粘贴时后面几行可能落在 exec 模式里报错，跑完再补。NETCONF 依赖 `aaa new-model`，开启后要等一两分钟 830 端口才通：`nc -z 192.168.1.99 830`。
 
-   ```bash
-   cd ansible
-   ansible-galaxy collection install -r requirements.yml -p ~/.ansible/collections
-   uv tool install --force ansible-core --with paramiko   # ansible-core 用 uv 装时
-   ```
+**NaC**：`data/00_fusion.nac.yaml`，根键是 `iosxe:`，设备用 `host` 指向管理地址：
 
-**运行**：先 `--check --diff` 看要改什么，再正式执行。
-
-```bash
-cd ansible
-export FUSION_USER=<用户>
-ansible-playbook fusion_handoff.yml -k --check --diff
-ansible-playbook fusion_handoff.yml -k
+```yaml
+iosxe:
+  devices:
+    - name: FUSION-1
+      host: 192.168.1.99
+      templates: [fusion-dhcp-dns]
+      configuration:
+        interfaces:
+          ethernets:
+            - type: GigabitEthernet
+              id: "2"
+              description: TO-HQ-BCP-1
+              ipv4: { address: 10.0.1.1, address_mask: 255.255.255.0 }
+        routing:
+          static_routes:
+            - prefix: 9.9.9.0           # fabric loopback 汇总，学不到的丢弃
+              mask: 255.255.255.0
+              next_hops:
+                - interface_type: "Null"  # 要加引号，否则 YAML 当成空值
+                  interface_id: "0"
+          bgp:
+            as_number: 650002
+            neighbors:
+              - { ip: 10.0.1.2, remote_as: 650003 }
+            address_family:
+              ipv4_unicast:
+                networks:
+                  - network: 192.168.1.0  # 有类 /24，IOS 不存掩码，这里也不写
+                neighbors:
+                  - ip: 10.0.1.2
+        dhcp_pools:
+          - name: CORP-VLAN-100
+            network_number: 10.254.100.0
+            network_mask: 255.255.255.0
+            default_routers: [10.254.100.1]
+            dns_servers: [192.168.1.99]
 ```
 
-**验证**：fusion 上 `show ip interface brief | include \.10[12]` 两个子接口 up；`show run | section router bgp` 有两个 650003 邻居（此时状态 Idle/Active）。会话起来的验证在「构建（Stage 3）」。
+- 数据模型里没有的两条（`ip dhcp excluded-address`、`ip dns server`）用 CLI 模板（`type: cli`）原样下发。
+- 一个 YAML 文件只能有一个根键（`iosxe:` 或 `catalyst_center:`），所以 fusion 的配置单独成文件，`main.tf` 给两个模块分别传文件列表。
+
+**验证**：fusion 上 `show ip bgp summary` 两个邻居 Established，`show ip route bgp` 有 9.9.9.11–32 六条 /32；CatC Inventory 里设备恢复 Reachable。
+
+### 构建（Stage 0）
+
+前提：Task 1–6 完成，FUSION-1 做完 day-0 bootstrap。
+
+**1. 准备 `.env`**（只在第一次做）
+
+```bash
+cp .env.example .env
+```
+
+| 变量 | 填什么 |
+|---|---|
+| `CC_USERNAME` / `CC_PASSWORD` | CatC 管理员账号（SUPER-ADMIN-ROLE） |
+| `ISE_USERNAME` / `ISE_PASSWORD` | Task 10 准备第 6 步的 ISE 管理员账号 |
+| `ISE_SHARED_SECRET` | RADIUS 共享密钥，自己定一个随机字符串。CatC 会把它同时写进交换机的 `radius server` 配置和 ISE 的 Network Device，两边自动一致，不用记 |
+| `IOSXE_USERNAME` / `IOSXE_PASSWORD` | FUSION-1 上 bootstrap 建的本地账号 |
+
+`.env` 已 gitignore。CatC 地址在 `main.tf` 有默认值，要改就复制 `terraform.tfvars.example`。
+
+**2. 初始化**（只在第一次做，或模块、provider 版本变了之后）
+
+```bash
+terraform init        # 下载 provider 和两个 NaC 模块
+terraform validate    # 检查语法
+```
+
+**3. Plan、检查、apply**（每个阶段、每个新终端都先加载 `.env`）
+
+```bash
+set -a; source .env; set +a
+terraform plan -var stage=0 -out stage0.tfplan
+terraform show stage0.tfplan | less -R
+terraform apply stage0.tfplan
+terraform plan -var stage=0     # 只剩 iosxe_commit 一项 change
+```
+
+plan 里应有 15 个新增，全是 `module.iosxe`：`iosxe_system`、3 个 `iosxe_interface_ethernet`、2 条 `iosxe_static_route`、`iosxe_bgp` 和地址族、2 × 2 个 BGP 邻居资源、`iosxe_dhcp`、`iosxe_cli`（CLI 模板）、`iosxe_commit`。
+
+`iosxe_commit` 是「保存配置」这个动作（`save_config = true`，相当于 `write memory`），每次 plan 都显示 1 个 change，属于设计如此，其余资源应无变化。
+
 
 ---
 
 ## Stage 1 – 站点、地址池与 ISE 集成（`data/01_sites_pools.nac.yaml`）
+
+### 准备：CatC 应用包（GUI，一次性）
+
+新装的 CatC 只有核心包，fabric 相关的功能（fabric site、transit、VN 等）在 **SD Access** 包里。没装就跑 Stage 3，CatC 会直接拒绝：
+
+```
+NCSP11008: Package required to process the request was not found.
+No application found for type 'ConnectivityDomain' and qualifier 'null'.
+```
+
+NaC 管不了这一步：provider 和模块用的是 CatC 公开的 Intent API（站点、设备、fabric、策略），装应用包属于 CatC 平台自身的生命周期，走 maglev 内部的系统 API，没有公开。和 ISE、C8000V 的 day-0 一样，只能手工做一次。
+
+1. System → Software Management → Available Applications，勾选 **SD Access**（分类 Automation）→ Install。依赖包会一起装上，CatC 要能访问 Internet 下载。
+2. 进度看 **View Release Activities** → 点执行 ID：依次是 Get Install release、Download Artifacts、Install Package。主页面上的百分比更新很慢（本实验一直停在 1%），以这里的步骤为准。
+
+   > **安装要接近一小时，预留好时间。** 本实验（单节点 CatC 3.2.3，装 `sda` 和依赖包 `aca`）：12:11:34 开始，13:06:08（UTC）结束，**总共约 55 分钟**。其中 Download Artifacts 约 5.5 分钟，**Install Package 约 49 分钟**，期间 CatC 逐个停掉、更新再拉起 fusion 里的服务。
+   >
+   > 安装没结束前不要开始 Stage 3：部分 Intent API 会返回 502（本实验先是设备清单 `network-device`，恢复后又是模板项目 `template-programmer/project`），Terraform plan 会报 `StatusCode 502`。System 360 此时仍显示全部健康，因为被停掉的服务根本不在列表里。**以 Release Activities 里这次安装变成 Success 为准**，再跑 Stage 3。
+3. 也可以在这一步顺手装后面要用的包，例如 Group Based Policy Analytics（Stage 4 可选）。
+
+**验证**：View Installed Applications 里有 SD Access；左侧菜单 Provision → SD-Access 下的 Fabric Sites、Transits 能打开；System 360 里服务全部正常。
 
 ### ✅ Task 8 – 网络层级
 
@@ -309,7 +436,7 @@ catalyst_center:
 
 客户端用 DHCP，服务器放在 FUSION-1（见下）。
 
-#### 附：FUSION-1 上的 DHCP / DNS（✅ 已配置并保存）
+#### 附：FUSION-1 上的 DHCP / DNS
 
 **为什么放在 fusion**：SD-Access 的 DHCP 服务器一般在 fabric 外的共享服务区。流程：
 
@@ -317,20 +444,9 @@ catalyst_center:
 2. 服务器按 GIADDR 选池，回包时**原样带回 option 82**；
 3. Border 收到回包，根据 option 82 里的 RLOC 送回正确的 edge（因为所有 edge 共用同一个 GIADDR）。
 
-所以服务器必须支持回显 option 82，且有到 10.254.100.0/24 的路由（Stage 3 之后经 handoff 学到）。网关上的 DHCP 服务对 option 82 子选项的兼容性不确定，没采用。
+所以服务器必须支持回显 option 82，且有到 10.254.100.0/24 的路由（Stage 3 之后经 handoff 学到）。dnsmasq 这类 DHCP 服务对 option 82 子选项（SD-Access 的 relay 会带 5 和 11）是否完整回显未经验证，没采用。
 
-```
-ip dhcp excluded-address 10.254.100.1 10.254.100.9
-ip dhcp pool CORP-VLAN-100
- network 10.254.100.0 255.255.255.0
- default-router 10.254.100.1
- dns-server 192.168.1.99
- domain-name ccie.local
- lease 0 12
-ip domain lookup
-ip name-server 192.168.1.1
-ip dns server
-```
+配置在 Task 7 的 `data/00_fusion.nac.yaml`：`dhcp_pools` 定义地址池，`ip dhcp excluded-address` 和 `ip dns server` 走 CLI 模板。
 
 **验证**：`show ip dhcp pool`；Task 17 之后 `show ip dhcp binding`。
 
@@ -340,7 +456,7 @@ ip dns server
 
 **目标**：ISE 开 pxGrid，CatC 里加 ISE 为 AAA/PAN，重新 provision 后设备出现在 ISE 的 Network Devices 里。
 
-**NaC**：`data/01_sites_pools.nac.yaml` 的 `system_settings`，凭据在 `terraform.tfvars`。
+**NaC**：`data/01_sites_pools.nac.yaml` 的 `system_settings`，凭据从 `.env` 读。
 
 ```yaml
 catalyst_center:
@@ -349,7 +465,10 @@ catalyst_center:
       ise:
         ip_address: 192.168.1.221
         fqdn: ise.ccie.local          # 必须和 ISE 证书的 CN 一致
+        username: !env ISE_USERNAME
+        password: !env ISE_PASSWORD
         password_version: 1
+        shared_secret: !env ISE_SHARED_SECRET
         shared_secret_version: 1
         pxgrid_enabled: true
         retries: 3
@@ -365,23 +484,10 @@ catalyst_center:
 - `catalystcenter_authentication_policy_server`：相当于 System → Settings → External Services → Authentication and Policy Servers → Add → ISE。填 ISE 的 IP 和 FQDN、RADIUS 端口、RADIUS 共享密钥、ISE 管理员账号，并打开 pxGrid。CatC 用这个账号登录 ISE，交换证书、建立信任。
 - `catalystcenter_integrate_ise`：相当于 GUI 里弹出 ISE 证书时点「Accept」。接受证书后 CatC 和 ISE 完成 pxGrid 连接。
 
-**凭据怎么传**：ISE 用户名、密码和 RADIUS 共享密钥不写进 YAML（YAML 在公开仓库里），和 CatC 凭据一样放在 gitignore 的 `terraform.tfvars`。`main.tf` 把它们通过模块的 `model` 变量合并进 YAML 的 `ise` 段：
-
-```hcl
-module "catalyst_center" {
-  # ...
-  model = {
-    catalyst_center = { system_settings = { authentication_and_policy_servers = { ise = {
-      username      = var.ise_username
-      password      = var.ise_password
-      shared_secret = var.ise_shared_secret
-    } } } }
-  }
-}
-```
+**凭据怎么传**：YAML 在公开仓库里，所以 ISE 的用户名、密码和 RADIUS 共享密钥用 `!env` 从环境变量读（值在 `.env`）。
 
 - YAML 里写了 `password_version` 和 `shared_secret_version`，模块就改用 write-only 参数（`password_wo`、`shared_secret_wo`）：值发给 CatC，但不存进 state。代价是 Terraform 看不出值变没变，改了密码要把对应的 `*_version` 加 1，它才会重新下发。
-- 保存的 `.tfplan` 文件里会有这些值（Terraform 把输入变量存进 plan 文件）。`.tfplan` 已 gitignore，apply 完可以删。
+- 没加载 `.env` 时 plan 会报 YAML 解析错误（`!env` 找不到变量）。
 
 **准备（Terraform 之前手工做一次）**
 
@@ -409,46 +515,16 @@ CatC 集成 ISE 要求：ISE 开 ERS 读写和 pxGrid、用 FQDN 而不是 IP、
 
 5. **pxGrid 自动批准**：Administration → pxGrid Services → Settings → 勾选 **Automatically approve new certificate-based accounts** 和 **Allow password based account creation** → Save。不勾的话，CatC 的 pxGrid 客户端要在 ISE 里手工 Approve。
 
-6. **ISE 管理员账号**：用一个有 Super Admin 权限的账号（lab 里直接用 ISE 的 admin），它的用户名和密码填进下面构建步骤的 `terraform.tfvars`。
+6. **ISE 管理员账号**：用一个有 Super Admin 权限的账号（lab 里直接用 ISE 的 admin），它的用户名和密码填进 `.env`（见「构建（Stage 0）」）。
 
 **验证**：CatC → System → Settings → External Services → Authentication and Policy Servers，ISE 状态 Active；CatC → System → System 360 → Externally Connected Systems 里 ISE 为 Available；ISE → Administration → pxGrid Services → Client Management → Clients 里 CatC 的客户端为 Enabled。Task 12 provision 之后，设备出现在 ISE 的 Network Devices 里。
 
 ### 构建（Stage 1）
 
-前提：Stage 0 完成；Task 10 的「准备」1–6 都做完。
-
-**1. 准备 `terraform.tfvars`**（只在第一次做）
+前提：Stage 0 完成（`.env` 已准备、`terraform init` 已做）；Task 10 的「准备」1–6 都做完。
 
 ```bash
-cp terraform.tfvars.example terraform.tfvars
-```
-
-打开 `terraform.tfvars`，把尖括号里的占位符换成真实值：
-
-| 变量 | 填什么 |
-|---|---|
-| `catalystcenter_url` | CatC 的地址，本实验 `https://192.168.1.133` |
-| `catalystcenter_username` / `catalystcenter_password` | CatC 管理员账号（SUPER-ADMIN-ROLE） |
-| `ise_username` / `ise_password` | 准备第 6 步的 ISE 管理员账号 |
-| `ise_shared_secret` | RADIUS 共享密钥，自己定一个随机字符串。CatC 会把它同时写进交换机的 `radius server` 配置和 ISE 的 Network Device，两边自动一致，不用记 |
-
-`terraform.tfvars` 已 gitignore，不会进仓库。不想把 CatC 密码写进文件，就把那两行删掉，改用环境变量，例如从 Bitwarden 临时取：
-
-```bash
-export CC_USERNAME=<CatC 用户名>
-export CC_PASSWORD=$(bw get password <Bitwarden 条目名>)
-```
-
-**2. 初始化**（只在第一次做，或模块、provider 版本变了之后）
-
-```bash
-terraform init        # 下载 provider 和 nac-catalystcenter 模块
-terraform validate    # 检查语法
-```
-
-**3. Plan、检查、apply**
-
-```bash
+set -a; source .env; set +a
 terraform plan -var stage=1 -out stage1.tfplan
 terraform show stage1.tfplan | less -R
 terraform apply stage1.tfplan
@@ -461,9 +537,9 @@ plan 里应有：`catalystcenter_area`（USA）、`catalystcenter_building`（SD
 
 ## Stage 2 – AAA 与设备 provision（`data/02_aaa_devices.nac.yaml`）
 
-### ✅ Task 11 – Building 的 AAA 设置
+### ✅ Task 11 – Building 的 AAA 和 Telemetry 设置
 
-**目标**：SDA-Campus 的 client AAA 指向 ISE `192.168.1.221`。
+**目标**：SDA-Campus 的 client AAA 指向 ISE `192.168.1.221`；打开有线客户端数据采集（IP Device Tracking）。
 
 ```yaml
             network_settings:
@@ -471,9 +547,12 @@ plan 里应有：`catalystcenter_area`（USA）、`catalystcenter_building`（SD
                 server_type: ISE
                 protocol: RADIUS
                 primary_ip: 192.168.1.221
+              telemetry:
+                wired_data_collection: true
 ```
 
-只设 client/endpoint AAA（802.1X 认证用户和终端）；设备登录的 network AAA 本实验不配。ISE 必须先集成（Task 10），否则 CatC 拒绝把它设为 AAA。
+- 只设 client/endpoint AAA（802.1X 认证用户和终端）；设备登录的 network AAA 本实验不配。ISE 必须先集成（Task 10），否则 CatC 拒绝把它设为 AAA。
+- **`wired_data_collection` 是 CatC 3.x 建 fabric 的前置条件**（GUI：Design → Network Settings → Telemetry → Wired Client Data Collection）。没开的话，Stage 3 建 fabric site 时报 `NCSO20572`。要在设备 provision **之前**打开：provision 时 CatC 才会把 `device-tracking` 配置推下去。先 provision、后打开，加 edge 进 fabric 时报 `NCSO20573: Reprovisioning is required`，要把这些设备的 `state` 临时改成 `REPROVISION` apply 一次，再改回 `PROVISION`（provider 在 `reprovision = true` 时每次 apply 都会重新 provision）。
 
 ### ✅ Task 12 – 设备分配到站点并 provision
 
@@ -565,7 +644,7 @@ resource "catalystcenter_deploy_template" "regular_template_deploy_after_fabric"
 
 transit 和 L3 VN 定义在 `fabric` 下（全局），fabric site 及其 VN、设备角色、anycast gateway 定义在 `fabric.fabric_sites[]` 下。Task 13–17 在一个文件里、一次 apply。fusion 一侧已在 Stage 0（Task 7）配好，apply 之后 handoff 的 BGP 会话自动起来。
 
-### ⬜ Task 13 – Transit
+### ✅ Task 13 – Transit
 
 **目标**：IP-based transit `TO-FUSION`，AS 650002。
 
@@ -579,7 +658,7 @@ catalyst_center:
         autonomous_system_number: "650002"
 ```
 
-### ⬜ Task 14 – VN
+### ✅ Task 14 – VN
 
 **目标**：L3 VN `CORP`，关联 fabric site。
 
@@ -593,7 +672,7 @@ catalyst_center:
           - CORP
 ```
 
-### ⬜ Task 15 – Fabric site
+### ✅ Task 15 – Fabric site
 
 **目标**：SDA-Campus 建 fabric site，认证模板 Closed Authentication，控制平面用 LISP/BGP，不用 Pub/Sub。
 
@@ -605,7 +684,7 @@ catalyst_center:
         pub_sub_enabled: false
 ```
 
-### ⬜ Task 16 – Fabric 设备角色与 L3 handoff
+### ✅ Task 16 – Fabric 设备角色与 L3 handoff
 
 | 设备 | 角色 | Handoff |
 |---|---|---|
@@ -636,11 +715,36 @@ catalyst_center:
 ```
 
 - `import_external_routes: true`：把 fusion 学到的 BGP 路由导入 fabric 控制平面（GUI 里对应不勾选「Do not import external routes」）。
-- handoff 要指定 transit、外部接口和地址：`ip_transit_name`、`interfaces[].name`、`local_ip_address` / `peer_ip_address`。地址也可以只给一个池（`external_handoff_pool`）让 CatC 分配，但那样 border 拿哪个地址要等 apply 之后才知道；写死地址（取自 Stage 1 预留的 `SDA-Campus-L3-Handoff-1/2`），fusion 一侧就能在 Stage 0 提前配好。
+- handoff 要指定 transit、外部接口和地址：`ip_transit_name`、`interfaces[].name`、`local_ip_address` / `peer_ip_address`。地址也可以只给一个池（`external_handoff_pool`）让 CatC 分配，但那样 border 拿哪个地址要等 apply 之后才知道；写死地址（取自 Stage 1 预留的 `SDA-Campus-L3-Handoff-1/2`），fusion 一侧就能用同样的地址一起建。
+
+**Fusion 一侧**：`data/03_fusion_handoff.nac.yaml`（nac-iosxe），和 border 一侧在同一次 apply 里建。fusion 不做 VRF：GRT 的路由全部漏进 CORP VN。
+
+```yaml
+iosxe:
+  devices:
+    - name: FUSION-1
+      configuration:
+        interfaces:
+          ethernets:
+            - type: GigabitEthernet
+              id: "2.101"                     # 子接口：Gi2 上的 VLAN 101
+              encapsulation_dot1q_vlan_id: 101
+              ipv4: { address: 10.254.251.2, address_mask: 255.255.255.252 }
+        routing:
+          bgp:
+            neighbors:
+              - { ip: 10.254.251.1, remote_as: 650003 }   # = border 的 local_ip_address
+            address_family:
+              ipv4_unicast:
+                neighbors:
+                  - ip: 10.254.251.1
+```
+
+`data/00` 和这个文件里都有 `name: FUSION-1`，模块按名字把两份配置合并成一台设备。
 - Border 连 fusion 的口必须是 switchport（trunk），CatC 才能在上面加 handoff VLAN 的 SVI。
 - 部署很慢（可能要半小时左右），期间 CatC 里设备显示不可达属正常，进度看 Activities → Tasks。
 
-### ⬜ Task 17 – Anycast gateway
+### ✅ Task 17 – Anycast gateway
 
 **目标**：CORP 里的 VLAN 100，使用 `SDA-Campus-VLAN-100`（模块按 `ip_pool_name` 关联）。
 
@@ -656,24 +760,31 @@ catalyst_center:
 
 ### 构建（Stage 3）
 
-前提：Stage 2 已 apply。CatC → Provision → Inventory，把站点切到 `Global/USA/SDA-Campus`，HQ-BCP-1/2、HQ-EDGE-1/2 的 Provision Status 都是 Success。
+前提：CatC 已装 SD Access 包（Stage 1 的「准备：CatC 应用包」）；Stage 2 已 apply。CatC → Provision → Inventory，把站点切到 `Global/USA/SDA-Campus`，HQ-BCP-1/2、HQ-EDGE-1/2 的 Provision Status 都是 Success。
 
 ```bash
+set -a; source .env; set +a
 terraform plan -var stage=3 -out stage3.tfplan
 terraform apply stage3.tfplan
-terraform plan -var stage=3     # 应为 No changes
+terraform plan -var stage=3     # 只剩 iosxe_commit 一项 change
 ```
 
-plan 里应有 12 个新增：`catalystcenter_transit_network`、`catalystcenter_fabric_site`、`catalystcenter_update_authentication_profile`（Closed Authentication）、`catalystcenter_fabric_l3_virtual_network`（CORP）、2 个 `border_device`、2 个 `edge_device`、2 个 `catalystcenter_fabric_l3_handoff_ip_transits`、1 个 `catalystcenter_anycast_gateway`，以及 1 个 `terraform_data` 校验。
+plan 里应有 18 个新增、1 个 change（`iosxe_commit`）：
 
-apply 可能要半小时左右。在 `tmux` 里跑，避免终端关闭把 Terraform 中断；中断了就重新 plan、apply。完成后验证 handoff（fusion 一侧在 Task 7 已配好）：
+- CatC 12 个：`catalystcenter_transit_network`、`catalystcenter_fabric_site`、`catalystcenter_update_authentication_profile`（Closed Authentication）、`catalystcenter_fabric_l3_virtual_network`（CORP）、2 个 `border_device`、2 个 `edge_device`、2 个 `catalystcenter_fabric_l3_handoff_ip_transits`、1 个 `catalystcenter_anycast_gateway`，以及 1 个 `terraform_data` 校验；
+- FUSION-1 6 个：2 个子接口（`ethernet_sub`）、2 × 2 个 BGP 邻居资源。
 
-```bash
-cd ansible
-ansible-playbook fusion_handoff.yml -k --tags verify   # 等两个 BGP 会话 Established
-```
+apply 可能要半小时左右。在 `tmux` 里跑，避免终端关闭把 Terraform 中断；中断了就重新 plan、apply。如果 Stage 2 provision 时还没打开 `wired_data_collection`，第一次 apply 会在 fabric site 或 edge 上失败（`NCSO20572` / `NCSO20573`），按 Task 11 补上后重新 plan、apply，已建好的资源不会重复建。
 
-再在 fusion 上 `show ip bgp` 看到 10.254.100.0/24，border 上 `show bgp vpnv4 unicast vrf CORP` 看到 192.168.1.0/24。
+**apply 成功不等于配置已经下发到设备上。** provider 只等 CatC 接受请求，CatC 下发失败（比如那一刻连不上设备）时 Terraform 照样报成功。所以 apply 之后要上设备逐台核对：
+
+- Edge（两台都要看）：`show vrf brief` 里有 `CORP`（含 Vl100 和 LI0.4099）；`show ip interface brief | include Vlan100|LISP` 里 Vlan100 是 10.254.100.1（没有客户端时 protocol 是 down，正常）；`show lisp session` 里到 9.9.9.11、9.9.9.12 两个会话都是 Up。
+- Border：`show ip bgp vpnv4 vrf CORP summary` 里到 fusion 的邻居（BCP-1 是 10.254.251.2，BCP-2 是 10.254.252.2）Established；`show ip route vrf CORP 192.168.1.0` 是从 fusion 学来的。
+- Fusion：`show ip bgp summary` 里 10.254.251.1、10.254.252.1 两个邻居 Established，`show ip bgp` 看到 10.254.100.0/24。
+
+设备上没配置时，先看 CatC 的审计日志（Activities → Audit Logs，或 `GET /dna/data/api/v1/event/event-series/audit-logs`）里有没有 `Service request processing has failed`。处理办法见排错记录。
+
+实测（2026-11-12）：两台 border 和 EDGE-2 一次下发成功；EDGE-1 因为 CatC 连不上设备而下发失败，前后折腾了约 1.5 小时才补上。
 
 ---
 
@@ -763,3 +874,17 @@ sudo dhclient <fabric 侧网卡>
 | 2026-11-11 | stage1.tfplan 只有 7 个 `terraform_data` | plan 中途出错（plan 文件里 `errored: true`），不是 YAML 没读到；要看 plan 的完整报错输出 |
 | 2026-11-11 | `catalystcenter_integrate_ise`：`WAITING_USER_INPUT ... certificate ... not yet trusted` | 时序问题：接受证书的请求在 CatC 进入等待确认状态之前就发出了。再 apply 一次即可 |
 | 2026-11-11 | `catalystcenter_integrate_ise`：`FQDN ise.ccie.local doesn't match the common name contained in the system certificate` | ISE 改过主机名，admin 证书（443）已是新 CN，但 pxGrid 证书（8910）仍是旧主机名，由旧的内部 CA 签发。ISE → Certificates → CSR → 用途选 ISE Root CA → Replace ISE Root CA Certificate chain；然后按报错要求重建 CatC 里的 ISE 条目：`terraform apply -replace='module.catalyst_center.catalystcenter_authentication_policy_server.ise[0]' -target=module.catalyst_center.catalystcenter_integrate_ise.ise`。检查方法：`openssl s_client -connect <ise>:8910` 看 CN |
+| 2026-11-11 | C8000V 首次开机卡在 `Enter enable secret:` | 17.x 拒绝默认空 enable secret，必须设置；之后选 `2` 保存。选了 `0` 也能进 `Router>`，只是没保存，之后在 config 模式补 `enable secret` |
+| 2026-11-11 | C8000V Gi1 开机自己拿了 DHCP 地址，并连上 `devicehelper.cisco.com` | 出厂的 PnP 发现在工作。exec 模式 `pnpa service discovery stop`，再配静态地址 |
+| 2026-11-11 | 粘贴 bootstrap 时 `crypto key generate` 之后的几行报 `Invalid input` | 生成密钥期间退回了 exec 模式。密钥生成完再补那几行 |
+| 2026-11-11 | `netconf-yang` 已开，但 830 端口不通 | NETCONF 依赖 `aaa new-model`；开 AAA 后等一两分钟（`show netconf-yang status`、`nc -z <ip> 830`） |
+| 2026-11-11 | nac-iosxe：`multiple architecture keys found: "iosxe" and "catalyst_center"` | 一个 YAML 文件只能有一个根键。fusion 的配置放进单独的文件（`data/00_fusion`、`data/03_fusion_handoff`），`main.tf` 给两个模块分别传文件列表 |
+| 2026-11-11 | 静态路由 `next_hops[0].next_hop` required | YAML 把 `interface_type: Null` 解析成空值，要写成 `"Null"` |
+| 2026-11-11 | apply 后 BGP `network 192.168.1.0 mask 255.255.255.0` 每次 plan 都要改 | 有类 /24，IOS 存成不带掩码的 `network 192.168.1.0`，读回来对不上。YAML 里去掉 `mask` |
+| 2026-11-11 | `iosxe_commit` 每次 plan 都显示 `save_config = false -> true` | 设计如此：它代表「保存配置」这个动作，每次 apply 都执行一次 `write memory`。其余资源无变化即算收敛 |
+| 2026-11-11 | Stage 3：transit / fabric site 报 `NCSP11008 ... No application found for type 'ConnectivityDomain'` | CatC 没装 SD Access 包。按 Stage 1「准备：CatC 应用包」装好再跑 |
+| 2026-11-11 | 装 SD Access 包后 plan 报 `StatusCode 502`（`network-device`、`template-programmer/project`），System 360 却显示全部健康 | 安装还没结束（本实验整个安装约 55 分钟），安装流程停掉了 fusion 里的服务。Kibana 里 Kong 日志是 `connect() failed (111: Connection refused) while connecting to upstream`，inventory 服务最后一条日志是 `Stopping`。等 Release Activities 显示 Success 再跑；健康检查要带认证，未认证请求会被 Kong 直接回 401 |
+| 2026-11-12 | Stage 3：fabric site 报 `NCSO20572: Before creating a new Fabric Site ... enable wired client IP Device Tracking` | CatC 3.x 的新前置条件。building 的 `network_settings.telemetry.wired_data_collection: true`（Task 11） |
+| 2026-11-12 | Stage 3：edge 加入 fabric 报 `NCSO20573: Reprovisioning is required on device ... for applying wired client IP Device Tracking` | 设备在打开 IP Device Tracking 之前 provision 过。把 edge 的 `state` 临时改成 `REPROVISION` apply 一次，再改回 `PROVISION` |
+| 2026-11-12 | Stage 3：apply 成功，但 HQ-EDGE-1 上没有 VRF CORP、Vlan100、LISP；EDGE-2 正常 | 审计日志：`Service request processing has failed with error: Connection error on device 9.9.9.31`，下发那一刻 CatC 连不上设备，provider 不等下发结果，所以 apply 照样成功。`REPROVISION` 只会重推 provision 那部分配置，fabric 配置不会重推 |
+| 2026-11-12 | 把 EDGE-1 移出再加回 fabric（`terraform apply -replace=...edge_device["HQ-EDGE-1"]`），加回时报 `NCSO20148: The LISP configuration is already present on device` | 设备上其实没有 LISP 配置，是 CatC 缓存的设备配置还是旧的。强制 resync 后再 apply 就能加回去，但加回后 CatC 只推了清理命令，没推 fabric 配置。resync 被 provision 打断过几次（`NCIM12021`），等同步完成后，CatC 自动又跑了一次 Switch Fabric Provisioning，这次把配置推了下去，具体是什么触发的不清楚。经验：先确认设备 Reachable、inventory 是 Managed，再加 fabric 设备；遇到 NCSO20148 先 resync，等 Managed 之后再试 |
