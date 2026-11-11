@@ -1,0 +1,73 @@
+---
+# Stage 3 (workbook Tasks 13-17). FUSION-1 side: Task 7 (Stage 0), ansible/fusion_handoff.yml.
+# Field names checked against module 0.6.0 (cc_fabric.tf) and provider 0.6.6 schema.
+catalyst_center:
+  fabric:
+    # Task 13: IP-based transit towards the fusion router (AS 650002).
+    transits:
+      - name: TO-FUSION
+        type: IP_BASED_TRANSIT
+        routing_protocol_name: BGP
+        autonomous_system_number: "650002"
+
+    # Task 14: L3 VN. Listed here (global) and under the fabric site below.
+    l3_virtual_networks:
+      - name: CORP
+
+    fabric_sites:
+      # Task 15: fabric site, Closed Authentication, LISP/BGP (pub_sub_enabled: false).
+      - name: Global/USA/SDA-Campus
+        authentication_template:
+          name: Closed Authentication
+        pub_sub_enabled: false
+
+        l3_virtual_networks:
+          - CORP
+
+        # Task 16: fabric roles. name must match inventory.devices[].name (data/02).
+        fabric_devices:
+          - name: HQ-BCP-1
+            fabric_roles: [BORDER_NODE, CONTROL_PLANE_NODE]
+            border_types: [LAYER_3]
+            local_autonomous_system_number: "650003"
+            default_exit: true
+            # Workbook: untick "Do not import external routes" -> import them.
+            import_external_routes: true
+            l3_handoffs:
+              - ip_transit_name: TO-FUSION
+                interfaces:
+                  - name: GigabitEthernet1/0/1
+                    virtual_networks:
+                      - name: CORP
+                        vlan: 101
+                        # Fixed addresses from SDA-Campus-L3-Handoff-1, so FUSION-1 can be
+                        # configured beforehand (Stage 0).
+                        local_ip_address: 10.254.251.1/30
+                        peer_ip_address: 10.254.251.2/30
+          - name: HQ-BCP-2
+            fabric_roles: [BORDER_NODE, CONTROL_PLANE_NODE]
+            border_types: [LAYER_3]
+            local_autonomous_system_number: "650003"
+            default_exit: true
+            import_external_routes: true
+            l3_handoffs:
+              - ip_transit_name: TO-FUSION
+                interfaces:
+                  - name: GigabitEthernet1/0/1
+                    virtual_networks:
+                      - name: CORP
+                        vlan: 102
+                        # Fixed addresses from SDA-Campus-L3-Handoff-2.
+                        local_ip_address: 10.254.252.1/30
+                        peer_ip_address: 10.254.252.2/30
+          - name: HQ-EDGE-1
+            fabric_roles: [EDGE_NODE]
+          - name: HQ-EDGE-2
+            fabric_roles: [EDGE_NODE]
+
+        # Task 17: anycast gateway VLAN 100 in CORP, pool reserved in data/01.
+        anycast_gateways:
+          - l3_virtual_network: CORP
+            ip_pool_name: SDA-Campus-VLAN-100
+            vlan_id: 100
+            vlan_name: VLAN_100

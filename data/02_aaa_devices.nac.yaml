@@ -1,5 +1,5 @@
 ---
-# Stage 2 (workbook Task 9 + Task 10). Task 8 (ISE integration) lives in ise.tf.
+# Stage 2 (workbook Tasks 11-12). Task 10 (ISE integration) is applied in Stage 1 (data/01).
 # Field names checked against module 0.6.0 (cc_network_settings.tf, cc_device_provision.tf).
 catalyst_center:
   sites:
@@ -8,8 +8,8 @@ catalyst_center:
         buildings:
           - name: SDA-Campus
             network_settings:
-              # Task 9: client/endpoint authentication goes to ISE. ISE must already be
-              # integrated (ise.tf) before this is applied.
+              # Task 11: client/endpoint authentication goes to ISE. ISE must already be
+              # integrated (Stage 1, data/01) before this is applied.
               client_and_endpoint_aaa:
                 server_type: ISE
                 protocol: RADIUS
@@ -19,7 +19,7 @@ catalyst_center:
     # name = CatC hostname without the domain; fqdn_name = hostname as CatC shows it
     # (devices have "ip domain name ccie.local"). device_ip = Loopback0 used for discovery.
     devices:
-      # Task 10: fabric nodes are assigned and provisioned to the building.
+      # Task 12: fabric nodes are assigned and provisioned to the building.
       - name: HQ-BCP-1
         fqdn_name: HQ-BCP-1.ccie.local
         device_ip: 9.9.9.11

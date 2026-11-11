@@ -1,0 +1,21 @@
+---
+# Task 7 (Stage 0): fusion side of the L3 handoff. The addresses are fixed in
+# ../data/03_fabric.nac.yaml (local_ip_address = border, peer_ip_address = fusion);
+# keep both files in sync.
+bgp_asn: 650002
+fabric_asn: 650003
+l3_handoffs:
+  - parent: Ethernet0/1          # to HQ-BCP-1 Gi1/0/1
+    vlan: 101
+    vn: CORP
+    pool: SDA-Campus-L3-Handoff-1
+    local_ip: 10.254.251.2
+    border_ip: 10.254.251.1
+    mask: 255.255.255.252
+  - parent: Ethernet0/2          # to HQ-BCP-2 Gi1/0/1
+    vlan: 102
+    vn: CORP
+    pool: SDA-Campus-L3-Handoff-2
+    local_ip: 10.254.252.2
+    border_ip: 10.254.252.1
+    mask: 255.255.255.252

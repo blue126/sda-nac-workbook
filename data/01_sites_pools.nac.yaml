@@ -1,7 +1,28 @@
 ---
-# Stage 1 (workbook Task 7 + Task 11): site hierarchy, global pool, building reservations.
-# Field names checked against module 0.6.0 source (cc_sites.tf, cc_network_settings.tf).
+# Stage 1 (workbook Tasks 8-10): site hierarchy, global pool, building reservations,
+# Catalyst Center to ISE integration.
+# Field names checked against module 0.6.0 source (cc_sites.tf, cc_network_settings.tf,
+# cc_system_settings.tf).
 catalyst_center:
+  # Task 10: integrate ISE. username, password and shared_secret come from terraform.tfvars
+  # (merged in main.tf), never from this file. With *_version set the module uses
+  # write-only arguments, so the secrets are not stored in state. Bump the version after
+  # changing a secret.
+  system_settings:
+    authentication_and_policy_servers:
+      ise:
+        ip_address: 192.168.1.221
+        fqdn: ise.ccie.local
+        password_version: 1
+        shared_secret_version: 1
+        pxgrid_enabled: true
+        retries: 3
+        timeout: 4
+        protocols:
+          radius:
+            authentication_port: 1812
+            accounting_port: 1813
+
   sites:
     global:
       network_settings:
@@ -30,7 +51,7 @@ catalyst_center:
                   gateway: 10.254.100.1
                   dhcp_servers: [192.168.1.99]
                   dns_servers: [192.168.1.99]
-                # /30 transfer links for the border-to-fusion L3 handoff (Task 15).
+                # /30 transfer links for the border-to-fusion L3 handoff (Task 16).
                 - name: SDA-Campus-L3-Handoff-1
                   global_pool: SDA-Campus
                   subnet: 10.254.251.0

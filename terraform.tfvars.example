@@ -3,8 +3,7 @@ catalystcenter_url      = "https://192.168.1.133"
 catalystcenter_username = "<CatC admin user>"
 catalystcenter_password = "<CatC admin password>"
 
-# Stage 2 – ISE integration (ise.tf). Leave ise_fqdn unset to skip it.
-ise_fqdn          = "ise.ccie.local"
+# Stage 1 – ISE integration (workbook Task 9). The other ISE settings are in data/01.
 ise_username      = "<ISE admin user>"
 ise_password      = "<ISE admin password>"
 ise_shared_secret = "<RADIUS shared secret>"
