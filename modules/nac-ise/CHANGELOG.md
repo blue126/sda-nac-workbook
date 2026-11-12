@@ -1,0 +1,90 @@
+## 1.1.0
+
+- Fix TrustSec egress matrix cell update failing with "Only one Catch All Rule SGACL can exist" when a cell's `default_rule` had drifted out of band, triggered by any change to that cell
+- Fixed perpetual drift in identity groups assignment by sorting UUIDs before concatenation to match ISE's storage order ([#86](https://github.com/netascode/terraform-ise-nac-ise/pull/86))
+- Add support for the `rsa_pss` (requires Cisco ISE 3.4) and `display_additional_tls_params` (requires Cisco ISE 3.5) data model keys on network access allowed protocols
+- Add recursive YAML file discovery for `yaml_directories`, so files in subfolders are now included [link](https://github.com/netascode/terraform-ise-nac-ise/issues/84)
+- Fix perpetual plan drift on Default policy set resources by ignoring `description` and `rank` after brownfield import
+- Fix a spurious plan diff after brownfield import of `active_directory_join_point` [link](https://github.com/netascode/terraform-ise-nac-ise/issues/81)
+- Add support for write-only secrets, opted in per secret with a `<secret>_version` data model key, on network devices, internal users and repositories
+
+**Breaking Changes:**
+- Raise the minimum requirements to Terraform `>= 1.11.0` and provider `CiscoDevNet/ise ~> 0.5.0`. Terraform 1.11 and provider 0.5.0 are required by the write-only secret support
+
+## 1.0.0
+
+- **BREAKING CHANGE**: Endpoints now reference a profiling policy by name via the `profile_name` data model key instead of the raw `profile_id`. The name is resolved to a profile ID automatically through the `ise_profiler_profile` data source. Replace `profile_id: "<uuid>"` with `profile_name: "<Profiler Policy Name>"` for any endpoint using `static_profile_assignment: true`.
+- Add support for endpoint custom attributes via the `endpoint_custom_attributes` data model key, mapping to the `ise_endpoint_custom_attribute` resource
+- **BREAKING CHANGE**: Authorization profile advanced attributes now use an explicit `dictionary_value` key for dictionary references (`AdvancedDictionaryAttribute`) instead of inferring intent from colons in `value`. `value` is now always a literal `AttributeValue` (colons preserved, so `value: "shell:priv-lvl=15"` no longer needs a special-case pattern). To configure a dictionary reference, replace `value: "Dictionary:attribute"` with `dictionary_value: "Dictionary:attribute"`. The `attribute_value_patterns` workaround has been removed.
+- Fix duplicate Terraform key error when defining multiple network device groups under the built-in `Is IPSEC Device` container [link](https://github.com/netascode/terraform-ise-nac-ise/pull/57)
+- Fix circular managed conditions losing their children on every plan by splitting them into a two-phase leaf/parent creation [link](https://github.com/netascode/terraform-ise-nac-ise/issues/58)
+- Fix incorrect network device group paths under the `Is IPSEC Device` hierarchy caused by `ndg_type_map` merge order, which produced a perpetual plan diff for devices in that hierarchy [link](https://github.com/netascode/terraform-ise-nac-ise/issues/64)
+- Fix perpetual plan drift on `active_directory_join_point` by ignoring `groups`, which are managed separately by `ise_active_directory_add_groups` [link](https://github.com/netascode/terraform-ise-nac-ise/issues/75)
+- Add SNMPv3 support for network devices via the `snmp.username`, `snmp.security_level`, `snmp.auth_protocol`, `snmp.auth_password`, `snmp.privacy_protocol` and `snmp.privacy_password` data model keys
+- Fix SNMP settings being dropped for devices without a read-only community string. SNMP attributes were previously gated on `snmp.ro_community`, so an SNMPv3 device produced empty SNMP settings. `snmp.version` and `snmp.username` now activate SNMP settings as well
+
+## 0.3.0
+
+- Add support for TrustSec Multiple Matrices (requires Cisco ISE 3.4 Patch 2 or above)
+- Add support for extended policy condition nesting from 3 to 7 levels (1 root + 6 nested children) for all 12 Network Access and Device Admin policy resources
+- Add automatic profiler profile ID lookup for EndPointPolicy conditions in authorization rules
+- Fix issue with missing `certificate_authentication_profile` field in identity source sequences when field is not defined in YAML
+- Add support for network device group references in TrustSec IP-SGT mappings and mapping groups with proper ID resolution
+- Add support for network device references in TrustSec IP-SGT mappings and mapping groups with proper ID resolution
+- Add deploy target resolution that selects between network devices (ND), network device groups (NDG), or all devices (ALL) based on `deploy_type` attribute in IP to SGT mapping and IP to SGT mapping groups
+- Add support for network access dictionary attributes
+- Fix support for custom network device group type names using single-segment path
+- Fix issue with circular condition references causing failures on fresh deployments
+- Fix issue with policy set rule ranking when Default policy set is used
+
+## 0.2.3
+
+- Fix Certificate Authentication Profile defaults and add proper support for `username_from: UPN` mode with Active Directory  
+- BREAKING CHANGE: Active Directory `groups` field now requires object format with `name` field instead of string format
+- Add support for adding AD groups using name and SID without domain join and lookup
+- Fix issue where `*_eap_tls_auth_of_expired_certs` attributes in allowed protocols were incorrectly set to `false` instead of `null` when parent EAP-TLS method is disabled, causing ISE API validation errors (PEAP, EAP-FAST, TEAP)
+- Add support for optional Active Directory join operation with `join_domain` flag, allowing creation of join points and addition of groups without executing join
+- Add support for automatic TrustSec policy push (SGTs, SGACLs, and egress matrix) to network devices with configurable `push_mode` (AUTO/DISABLED)
+- Add support for shell profile av-pairs under authorization profiles
+
+## 0.2.2
+
+- Fix issue with incorrect merging of authorization rules [link](https://github.com/netascode/terraform-ise-nac-ise/issues/27)
+- Fix issue with Cisco AV pairs not working properly within an authorization profile [link](https://github.com/netascode/terraform-ise-nac-ise/issues/28)
+
+## 0.2.1
+
+- Use Terraform functions to merge YAML content instead of data sources
+- Fix issue with idepotency when assigning device to DNAC network device group
+
+## 0.2.0
+
+- BREAKING CHANGE: Replace `network_access_*_update_rank` and `device_admin_*_update_rank` resources with `network_access_*_update_ranks` and `device_admin_*_update_ranks` resources to support bulk updates of ranks across (Policy Sets, Authentication Rules, Authorization Rules, Authorization Global Exception Rules and Authorization Exception Rules) under Network Access and Device Administration
+- BREAKING CHANGE: Rename `trustsec_download_enviroment_data_every_x_seconds` attribute of `ise_network_device` resource to `trustsec_download_environment_data_every_x_seconds`
+- Fix issue with incorrect generated ranks in multiple policies [link](https://github.com/netascode/terraform-ise-nac-ise/issues/21)
+- Fix update-in-place during import in `ise_user_identity_group`, `ise_endpoint_identity_group` and `network_device_group`
+- Fix update-in-place during `ise_device_admin_condition`, `ise_device_admin_time_and_date_condition` and `ise_device_admin_policy_set`
+- Fix update-in-place during `ise_network_access_condition`, `ise_network_access_time_and_date_condition` and `ise_network_access_policy_set`
+
+## 0.1.2
+
+- Add `parent_group` attribute to `user_identity_group`
+- Support new `*_update_rank` resources to allow changing the rank of policy sets or rules without impacting existing configurations
+- Support active directory configurations without groups
+- Added support for managing endpoints
+- Added support for default user identity groups assignment under internal users
+- Fix incorrect description attribute of `network_device_groups` configuration
+- BREAKING CHANGE: `endpoint_identity_groups` and `user_identity_groups` now support nested children in favor of `parent` references
+
+## 0.1.1
+
+- Fix issue with error due to missing settings for `allowed_protocols` and EAP-TLS stateless session resume
+- Add support for active directory configuration
+- Added `ise_identity_source_sequence` support
+- BREAKING CHANGE: Split `attribute_name` to `dictionary_name` and `attribute_name`
+- BREAKING CHANGE: Removed `manage_*` variables
+- Allow updating default policy sets and rules
+
+## 0.1.0
+
+- Initial release

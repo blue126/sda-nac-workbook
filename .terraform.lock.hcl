@@ -45,6 +45,28 @@ provider "registry.terraform.io/ciscodevnet/iosxe" {
   ]
 }
 
+provider "registry.terraform.io/ciscodevnet/ise" {
+  version     = "0.5.2"
+  constraints = "~> 0.5.0, ~> 0.5.2"
+  hashes = [
+    "h1:Ksp7IU96SzeTufSdbiEnqpSpJy1D9oMyLMPWSaReRLg=",
+    "zh:1b029b615ae45688acbeacc42f08fd2adc0f1969cdb3792230b71fee663c2a22",
+    "zh:2453d6e41514027607d4f10a9a7be160ce9583f12b665888b2eab62070236213",
+    "zh:467feaf431bb3da0713134710d4383405cdcf33845d028e0818ac0914c77f5d5",
+    "zh:4fbc4e360e19c6169f0245470d05fa5e56665d1a784a1823e15bdd9d218821b2",
+    "zh:890df766e9b839623b1f0437355032a3c006226a6c200cd911e15ee1a9014e9f",
+    "zh:95f1479abb57e00bb52d28e0408ba7957d59137a202ad50f1c675c7220050f87",
+    "zh:990fe5fb5c710910e3dd7da878c2c5d7adf9e661d8dac89b5a2b6582fa0bab38",
+    "zh:a4ce346305e7f188364954b62e6c86fda010d1d4e13379e0f93878b6cc48b61f",
+    "zh:a7da5618ff0e851bc44454a6978ba6b6f44a620b645a53b34005038c548a96cf",
+    "zh:c081c09d7bc12e9ab4c9c776fd381f66b43b13f38aa3555d8d205ecf9302080a",
+    "zh:d28a5569f518505c7feb4b24bdde4d97b2c9602c689512fe60c11d1e68e6c868",
+    "zh:d9978f20e4eb4f57e8b1ea559dfabb1334576d7a0907e1661586ed83bf3584e6",
+    "zh:e1b83826a4ce84ecefe4e4cede6240b33ac4b451e5d8aee8f5ec3c762a64c5d1",
+    "zh:fc3bffaea66c2e4faf235daa46ade9289be7e19b53bbe462e37e185ff497e607",
+  ]
+}
+
 provider "registry.terraform.io/hashicorp/local" {
   version     = "2.9.1"
   constraints = ">= 2.3.0"

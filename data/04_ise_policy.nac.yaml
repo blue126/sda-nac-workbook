@@ -1,0 +1,100 @@
+---
+# Stage 4: micro-segmentation and identity on ISE (nac-ise). Tasks 19-23.
+# Policy stays on ISE (not migrated to Catalyst Center GBAC); see WORKBOOK Task 18.
+ise:
+  # Task 19: SGT policy matrix. Employees / Contractors / Developers are ISE's built-in SGTs,
+  # and Permit IP / Deny IP are built-in SGACLs, so they are referenced here, not created.
+  trust_sec:
+    # Contractors is denied to and from everyone, itself included; everything else is permitted.
+    matrix_entries:
+      - { source_sgt: Employees, destination_sgt: Employees, sgacl_name: Permit IP }
+      - { source_sgt: Employees, destination_sgt: Contractors, sgacl_name: Deny IP }
+      - { source_sgt: Employees, destination_sgt: Developers, sgacl_name: Permit IP }
+      - { source_sgt: Contractors, destination_sgt: Employees, sgacl_name: Deny IP }
+      - { source_sgt: Contractors, destination_sgt: Contractors, sgacl_name: Deny IP }
+      - { source_sgt: Contractors, destination_sgt: Developers, sgacl_name: Deny IP }
+      - { source_sgt: Developers, destination_sgt: Employees, sgacl_name: Permit IP }
+      - { source_sgt: Developers, destination_sgt: Contractors, sgacl_name: Deny IP }
+      - { source_sgt: Developers, destination_sgt: Developers, sgacl_name: Permit IP }
+
+  identity_management:
+    # Task 20: user identity groups
+    user_identity_groups:
+      - name: SDA_Employees
+      - name: SDA_Contractors
+      - name: SDA_Developers
+
+    # Task 21: local users. One lab password for all of them, from .env (ISE_LAB_USER_PASSWORD).
+    internal_users:
+      - name: bob
+        password: !env ISE_LAB_USER_PASSWORD
+        password_version: 1
+        change_password: false
+        user_identity_groups: [SDA_Employees]
+      - name: joe
+        password: !env ISE_LAB_USER_PASSWORD
+        password_version: 1
+        change_password: false
+        user_identity_groups: [SDA_Contractors]
+      - name: susan
+        password: !env ISE_LAB_USER_PASSWORD
+        password_version: 1
+        change_password: false
+        user_identity_groups: [SDA_Contractors]
+      - name: kim
+        password: !env ISE_LAB_USER_PASSWORD
+        password_version: 1
+        change_password: false
+        user_identity_groups: [SDA_Developers]
+
+  network_access:
+    policy_elements:
+      # Task 22: Access-Accept with VLAN 100 (VLAN name on the edges is VLAN_100, from Task 17)
+      authorization_profiles:
+        - name: SDA_VLAN100
+          access_type: ACCESS_ACCEPT
+          vlan_name_id: VLAN_100
+          vlan_tag_id: 1
+
+    # Task 23: policy set for wired 802.1X: authenticate against Internal Users,
+    # authorize by identity group, return VLAN 100 plus the group's SGT.
+    policy_sets:
+      - name: SDA-Campus
+        description: SD-Access fabric wired 802.1X
+        service_name: Default Network Access
+        condition:
+          type: ConditionReference
+          name: Wired_802.1X
+        authentication_rules:
+          - name: Default
+            identity_source_name: Internal Users
+        authorization_rules:
+          - name: Employees
+            condition:
+              type: ConditionAttributes
+              dictionary_name: IdentityGroup
+              attribute_name: Name
+              operator: equals
+              attribute_value: User Identity Groups:SDA_Employees
+            profiles: [SDA_VLAN100]
+            security_group: Employees
+          - name: Contractors
+            condition:
+              type: ConditionAttributes
+              dictionary_name: IdentityGroup
+              attribute_name: Name
+              operator: equals
+              attribute_value: User Identity Groups:SDA_Contractors
+            profiles: [SDA_VLAN100]
+            security_group: Contractors
+          - name: Developers
+            condition:
+              type: ConditionAttributes
+              dictionary_name: IdentityGroup
+              attribute_name: Name
+              operator: equals
+              attribute_value: User Identity Groups:SDA_Developers
+            profiles: [SDA_VLAN100]
+            security_group: Developers
+          - name: Default
+            profiles: [DenyAccess]

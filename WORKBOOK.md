@@ -142,7 +142,7 @@ Terraform 按资源之间的依赖排顺序，没有依赖的资源并行创建�
 
 ### 怎么分
 
-`main.tf` 的变量 `stage` 决定读入哪些 YAML：Stage N 读入第 1 到 N 个文件。阶段是累加的，后面的阶段仍然包含前面的配置，已经建好的部分在 plan 里显示为无变化。`stage` 默认是 3（当前最后一个阶段）。
+`main.tf` 的变量 `stage` 决定读入哪些 YAML：Stage N 读入第 1 到 N 个文件。阶段是累加的，后面的阶段仍然包含前面的配置，已经建好的部分在 plan 里显示为无变化。`stage` 默认是 4（当前最后一个阶段）。
 
 | Stage | Task | 配置文件 | Plan 文件 |
 |---|---|---|---|
@@ -150,7 +150,7 @@ Terraform 按资源之间的依赖排顺序，没有依赖的资源并行创建�
 | Stage 1 | Task 8 网络层级、Task 9 地址池、Task 10 集成 ISE | `data/01_sites_pools.nac.yaml` | `stage1.tfplan` |
 | Stage 2 | Task 11 AAA、Task 12 设备分配和 provision | `data/02_aaa_devices.nac.yaml` | `stage2.tfplan` |
 | Stage 3 | Task 13–17 transit、VN、fabric site、设备角色、anycast gateway | `data/03_fabric.nac.yaml` + `data/03_fusion_handoff.nac.yaml`（fusion 一侧） | `stage3.tfplan` |
-| Stage 4 | Task 18–25 微分段与身份 | 待定（CatC 部分 + `nac-ise`） | — |
+| Stage 4 | Task 18 策略归属（不改配置）；Task 19–23 SGT 策略、身份组、用户、授权、policy set；Task 24–25 客户端和验证（手工） | `data/04_ise_policy.nac.yaml`（nac-ise） | `stage4.tfplan` |
 
 ### 每个阶段怎么做
 
@@ -786,29 +786,70 @@ apply 可能要半小时左右。在 `tmux` 里跑，避免终端关闭把 Terra
 
 ---
 
-## Stage 4 – 微分段与身份（ISE / CatC）
+## Stage 4 – 微分段与身份（ISE，`data/04_ise_policy.nac.yaml`）
 
-*NaC 方案待定，确定后可能按 CatC / ISE 两个配置拆分重排。*
+这一阶段的配置全部在 ISE 上，用 [nac-ise](https://registry.terraform.io/modules/netascode/nac-ise/ise/latest) 模块（底层是 `CiscoDevNet/ise` provider）。CatC 不参与：fabric 在 Stage 3 已经建好，edge 认证用户时向 ISE 要 SGT，执行策略时也从 ISE 下载 SGACL。
 
-### ⬜ Task 18 – TrustSec 迁移
+### ✅ Task 18 – 策略归属：留在 ISE，不迁到 CatC
 
-把 TrustSec 策略管理从 ISE 迁到 CatC（Group-Based Policy）。
+SDA 的微分段策略（SGT、contract / SGACL、策略矩阵）可以放在两个地方编写：
 
-### ⬜ Task 19 – 安全策略
+- **ISE**：Work Centers → TrustSec。这是默认状态。
+- **CatC**：Policy → Group-Based Access Control（GBAC）。要先在 CatC 里做一次「迁移」，迁完后 CatC 是编写入口，通过 ERS 同步到 ISE，ISE 上的 TrustSec 对象变成只读。这是 Cisco 推荐的 SDA 运维方式。
+
+本 lab 选择**留在 ISE**，原因是 NaC 覆盖不到 CatC 的 GBAC：
+
+| 工具 | 能不能管 GBAC 对象 |
+|---|---|
+| `CiscoDevNet/catalystcenter` provider 0.6.6、nac-catalystcenter 0.6.0 | 不能，没有 security group / contract / 策略相关资源 |
+| `cisco-en-programmability/dnacenter`（旧 provider）、Ansible `cisco.dnac` | 不能 |
+| `CiscoDevNet/ise` provider、nac-ise | 能：SGT、SGACL、egress matrix，以及身份组、内部用户、授权结果、policy set |
+
+原因是这些 CatC 工具都是按 CatC 的公开 Intent API（`/dna/intent/api/...`）生成的，而 GBAC 不在公开 API 里：CatC GUI 用的是内部接口 `/api/v2/data/customer-facing-service/{scalablegroup,contract/access,policy/access}`，没有文档，升级时可能变，不适合当 NaC 的基础（2026-11 在 CatC 3.2.3 上核实）。
+
+代价：
+
+- CatC 里的 GBAC 页面不用；策略矩阵在 ISE（Work Centers → TrustSec → TrustSec Policy → Egress Policy → Matrix）看。
+- 执法效果不受影响：两种方式下 edge 都从 ISE 下载 SGACL，验证命令相同（Task 25）。
+- 不迁移就不会让 ISE 的 TrustSec 对象变成只读，以后想改成 CatC 编写还可以再迁；迁完要把 nac-ise 里 TrustSec 那部分从 state 移出（`terraform state rm`），否则会和 CatC 抢着改。
+
+**不需要任何操作**：只要不在 CatC 的 Group-Based Access Control 页面里启动迁移，策略就一直归 ISE。
+
+### ✅ Task 19 – 安全策略（SGT 矩阵）
+
+**目标**：Contractors 和任何组之间都不通（包括 Contractors 之间），其余互通。
 
 | SRC \ DST | Employees | Contractors | Developers |
 |---|---|---|---|
-| Employees | `[ ]` | `[ ]` | `[ ]` |
-| Contractors | `[ ]` | `[ ]` | `[ ]` |
-| Developers | `[ ]` | `[ ]` | `[ ]` |
+| Employees | permit | deny | permit |
+| Contractors | deny | deny | deny |
+| Developers | permit | deny | permit |
 
-`[按实验设计填 permit / deny]`
+```yaml
+ise:
+  trust_sec:
+    matrix_entries:
+      - { source_sgt: Employees, destination_sgt: Employees, sgacl_name: Permit IP }
+      - { source_sgt: Employees, destination_sgt: Contractors, sgacl_name: Deny IP }
+      # ……共 9 格，见 data/04_ise_policy.nac.yaml
+```
 
-### ⬜ Task 20 – ISE 用户组
+- Employees（4）、Contractors（5）、Developers（8）是 ISE 自带的 SGT，`Permit IP`、`Deny IP` 是自带的 SGACL，所以这里只引用，不新建（模块用 data source 按名字查 ID）。
+- 9 格都写出来，不依赖矩阵的默认规则：读 YAML 就能看到完整策略。
+- Contractors → Contractors 也是 deny：同一 SGT 之间的流量同样按矩阵执法，两个 Contractors 用户互 ping 也不通。
+- 写进 ISE 的 Production 矩阵后，edge 在下次刷新或收到 CoA 时从 ISE 下载 SGACL。
 
-`SDA_Employees`、`SDA_Contractors`、`SDA_Developers`
+### ✅ Task 20 – ISE 用户组
 
-### ⬜ Task 21 – ISE 本地用户
+```yaml
+  identity_management:
+    user_identity_groups:
+      - name: SDA_Employees
+      - name: SDA_Contractors
+      - name: SDA_Developers
+```
+
+### ✅ Task 21 – ISE 本地用户
 
 | 用户 | 组 | 客户端 |
 |---|---|---|
@@ -817,15 +858,64 @@ apply 可能要半小时左右。在 `tmux` 里跑，避免终端关闭把 Terra
 | susan | SDA_Contractors | `[现网无此客户端]` |
 | kim | SDA_Developers | `[现网无此客户端]` |
 
-密码不写进本文件。
+```yaml
+    internal_users:
+      - name: bob
+        password: !env ISE_LAB_USER_PASSWORD
+        password_version: 1          # 用 write-only 参数，密码不进 state；改密码时把它加 1
+        change_password: false       # 不要求首次登录改密码，否则 802.1X 登录会失败
+        user_identity_groups: [SDA_Employees]
+```
 
-### ⬜ Task 22 – 授权结果
+四个用户共用 `.env` 里的 `ISE_LAB_USER_PASSWORD`，密码不写进仓库。
 
-Access-Accept，下发 VLAN 100。
+### ✅ Task 22 – 授权结果
 
-### ⬜ Task 23 – Policy set
+**目标**：Access-Accept，下发 VLAN 100。
 
-停用默认 policy set；新建一个用本地身份库认证、按身份组匹配并下发对应 SGT 的 policy set。
+```yaml
+  network_access:
+    policy_elements:
+      authorization_profiles:
+        - name: SDA_VLAN100
+          access_type: ACCESS_ACCEPT
+          vlan_name_id: VLAN_100     # edge 上 Task 17 生成的 VLAN 名（show vlan brief）
+          vlan_tag_id: 1
+```
+
+用 VLAN 名而不是编号：SDA 里 CatC 按名字建 VLAN，ISE 下发名字，edge 自己解析成编号。
+
+### ✅ Task 23 – Policy set
+
+**目标**：有线 802.1X 用本地身份库认证，按身份组授权，下发 VLAN 100 和对应的 SGT。
+
+```yaml
+    policy_sets:
+      - name: SDA-Campus
+        service_name: Default Network Access   # 允许的协议（含 PEAP）
+        condition:
+          type: ConditionReference
+          name: Wired_802.1X                   # ISE 自带的库条件
+        authentication_rules:
+          - name: Default
+            identity_source_name: Internal Users
+        authorization_rules:
+          - name: Employees
+            condition:
+              type: ConditionAttributes
+              dictionary_name: IdentityGroup
+              attribute_name: Name
+              operator: equals
+              attribute_value: User Identity Groups:SDA_Employees
+            profiles: [SDA_VLAN100]
+            security_group: Employees
+          # Contractors、Developers 同上
+          - name: Default
+            profiles: [DenyAccess]
+```
+
+- **默认 policy set 不停用。** 新的 `SDA-Campus` 排在 Default 前面，有线 802.1X 先匹配它；其他 RADIUS 请求（如果有）仍走 Default。要停用的话，在 YAML 里加一个 `name: Default` 的 policy set 并设 `state: disabled`，但要先确认没有别的设备依赖它。
+- 授权规则里的 `security_group` 就是下发给 edge 的 SGT；edge 按它查矩阵执法。
 
 ### ⬜ Task 24 – 客户端 802.1X
 
@@ -843,6 +933,45 @@ sudo dhclient <fabric 侧网卡>
 - 按 Task 19 的矩阵互 ping，确认策略生效；
 - 客户端 ping ISE、CatC，验证 handoff；
 - Edge：`show lisp instance-id * ethernet database`、`show cts role-based permissions`、`show access-session`。
+
+### 构建（Stage 4）
+
+前提：Stage 3 已 apply；ISE 上 ERS 和 OpenAPI 都已打开（Task 10 已开 ERS；policy set 走 OpenAPI，在 Administration → System → Settings → API Settings 里打开）；`.env` 里填好 `ISE_LAB_USER_PASSWORD`。
+
+```bash
+set -a; source .env; set +a
+terraform init                     # 第一次跑 Stage 4 时装 ISE provider
+terraform plan -var stage=4 -out stage4.tfplan
+terraform apply stage4.tfplan
+terraform plan -var stage=4        # 只剩 iosxe_commit 一项 change
+```
+
+plan 里应有 27 个新增、1 个 change（`iosxe_commit`），都在 `module.ise` 下：
+
+- 矩阵 9 格（`ise_trustsec_egress_matrix_cell`）；
+- 3 个用户组、4 个用户、1 个授权结果；
+- policy set 1 个，认证规则 1 个、授权规则 4 个（含 Default），以及 3 个 `*_update_ranks`（模块用来排定 policy set 和规则的顺序）；
+- 1 个 `terraform_data` 校验。
+
+**nac-ise 是复制进仓库的**（`modules/nac-ise/`，来源和改动见其中的 `VENDORED.md`）：官方 1.1.0 把 `netascode/utils` 钉死在 2.0.0，而 FUSION-1 用的 nac-iosxe 1.0.0 要求 `>= 2.0.2`，两个模块放不进同一个 root module。仓库里的副本只把这个约束放宽成 `>= 2.0.0, < 3.0.0`。
+
+如果 ISE 里已经有这几格矩阵（比如以前手工配过），apply 会报 `Cell Already Exists`，其余资源照常建好。这时先查出现有格子的 ID，用 `import` 块把它们导入 state，再 plan 确认没有差异（`terraform import` 命令处理不了模块里的 `for_each`，要用 `import` 块）：
+
+```hcl
+# imports.tf（临时文件，apply 后删除）
+import {
+  for_each = {
+    "Production-Employees-Employees" = "<ISE 里这一格的 ID>"   # GET /ers/config/egressmatrixcell
+    # ……其余几格
+  }
+  to = module.ise.ise_trustsec_egress_matrix_cell.trustsec_egress_matrix_cell[each.key]
+  id = each.value
+}
+```
+
+本 lab 的 ISE 里原本就有和 Task 19 一样的 9 格，所以是这样导入的：plan 显示 9 个 import、0 个新增。
+
+apply 之后在 ISE 上看：Work Centers → TrustSec → TrustSec Policy → Egress Policy → Matrix 里 9 格和 Task 19 一致；Policy → Policy Sets 里 `SDA-Campus` 排在 Default 前面。客户端认证和执法要等 Task 24–25。
 
 ---
 
