@@ -955,22 +955,6 @@ plan 里应有 27 个新增、1 个 change（`iosxe_commit`），都在 `module.
 
 **nac-ise 是复制进仓库的**（`modules/nac-ise/`，来源和改动见其中的 `VENDORED.md`）：官方 1.1.0 把 `netascode/utils` 钉死在 2.0.0，而 FUSION-1 用的 nac-iosxe 1.0.0 要求 `>= 2.0.2`，两个模块放不进同一个 root module。仓库里的副本只把这个约束放宽成 `>= 2.0.0, < 3.0.0`。
 
-如果 ISE 里已经有这几格矩阵（比如以前手工配过），apply 会报 `Cell Already Exists`，其余资源照常建好。这时先查出现有格子的 ID，用 `import` 块把它们导入 state，再 plan 确认没有差异（`terraform import` 命令处理不了模块里的 `for_each`，要用 `import` 块）：
-
-```hcl
-# imports.tf（临时文件，apply 后删除）
-import {
-  for_each = {
-    "Production-Employees-Employees" = "<ISE 里这一格的 ID>"   # GET /ers/config/egressmatrixcell
-    # ……其余几格
-  }
-  to = module.ise.ise_trustsec_egress_matrix_cell.trustsec_egress_matrix_cell[each.key]
-  id = each.value
-}
-```
-
-本 lab 的 ISE 里原本就有和 Task 19 一样的 9 格，所以是这样导入的：plan 显示 9 个 import、0 个新增。
-
 apply 之后在 ISE 上看：Work Centers → TrustSec → TrustSec Policy → Egress Policy → Matrix 里 9 格和 Task 19 一致；Policy → Policy Sets 里 `SDA-Campus` 排在 Default 前面。客户端认证和执法要等 Task 24–25。
 
 ---
