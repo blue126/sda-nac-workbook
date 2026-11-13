@@ -1,21 +1,21 @@
 ---
-# Stage 3 (workbook Tasks 13-17). FUSION-1 side: data/03_fusion_handoff.nac.yaml.
+# Stage 3 (workbook Tasks 17-21). FUSION-1 side: data/03_fusion_handoff.nac.yaml.
 # Field names checked against module 0.6.0 (cc_fabric.tf) and provider 0.6.6 schema.
 catalyst_center:
   fabric:
-    # Task 13: IP-based transit towards the fusion router (AS 650002).
+    # Task 17: IP-based transit towards the fusion router (AS 650002).
     transits:
       - name: TO-FUSION
         type: IP_BASED_TRANSIT
         routing_protocol_name: BGP
         autonomous_system_number: "650002"
 
-    # Task 14: L3 VN. Listed here (global) and under the fabric site below.
+    # Task 18: L3 VN. Listed here (global) and under the fabric site below.
     l3_virtual_networks:
       - name: CORP
 
     fabric_sites:
-      # Task 15: fabric site, Closed Authentication, LISP/BGP (pub_sub_enabled: false).
+      # Task 19: fabric site, Closed Authentication, LISP/BGP (pub_sub_enabled: false).
       - name: Global/USA/SDA-Campus
         authentication_template:
           name: Closed Authentication
@@ -24,7 +24,7 @@ catalyst_center:
         l3_virtual_networks:
           - CORP
 
-        # Task 16: fabric roles. name must match inventory.devices[].name (data/02).
+        # Task 20: fabric roles. name must match inventory.devices[].name (data/02).
         fabric_devices:
           - name: HQ-BCP-1
             fabric_roles: [BORDER_NODE, CONTROL_PLANE_NODE]
@@ -65,7 +65,7 @@ catalyst_center:
           - name: HQ-EDGE-2
             fabric_roles: [EDGE_NODE]
 
-        # Task 17: anycast gateway VLAN 100 in CORP, pool reserved in data/01.
+        # Task 21: anycast gateway VLAN 100 in CORP, pool reserved in data/01.
         anycast_gateways:
           - l3_virtual_network: CORP
             ip_pool_name: SDA-Campus-VLAN-100

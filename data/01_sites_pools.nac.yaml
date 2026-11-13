@@ -1,10 +1,10 @@
 ---
-# Stage 1 (workbook Tasks 8-10): site hierarchy, global pool, building reservations,
+# Stage 1 (workbook Tasks 10-12): site hierarchy, global pool, building reservations,
 # Catalyst Center to ISE integration.
 # Field names checked against module 0.6.0 source (cc_sites.tf, cc_network_settings.tf,
 # cc_system_settings.tf).
 catalyst_center:
-  # Task 10: integrate ISE. Credentials come from environment variables (!env, see
+  # Task 12: integrate ISE. Credentials come from environment variables (!env, see
   # .env.example), never from this file. With *_version set the module uses write-only
   # arguments, so the secrets are not stored in state. Bump the version after changing
   # a secret.
@@ -52,9 +52,9 @@ catalyst_center:
                   subnet: 10.254.100.0
                   prefix_length: 24
                   gateway: 10.254.100.1
-                  dhcp_servers: [192.168.1.99]
+                  dhcp_servers: [192.168.1.98]
                   dns_servers: [192.168.1.99]
-                # /30 transfer links for the border-to-fusion L3 handoff (Task 16).
+                # /30 transfer links for the border-to-fusion L3 handoff (Task 20).
                 - name: SDA-Campus-L3-Handoff-1
                   global_pool: SDA-Campus
                   subnet: 10.254.251.0

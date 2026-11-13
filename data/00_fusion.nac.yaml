@@ -1,21 +1,20 @@
 ---
-# Stage 0 (workbook Task 2 + DHCP/DNS): FUSION-1, a Catalyst 8000V outside Catalyst
+# Stage 0 (workbook Task 2 + DNS forwarding): FUSION-1, a Catalyst 8000V outside Catalyst
 # Center, managed with the nac-iosxe module over NETCONF. Credentials come from the
 # IOSXE_USERNAME / IOSXE_PASSWORD environment variables (the only way nac-iosxe takes
 # them). The L3 handoff to the borders is in data/03 (Stage 3).
 iosxe:
   templates:
     # Not modelled by nac-iosxe 1.0.0: pushed as raw CLI.
-    - name: fusion-dhcp-dns
+    - name: fusion-dns
       type: cli
       content: |
-        ip dhcp excluded-address 10.254.100.1 10.254.100.9
         ip dns server
 
   devices:
     - name: FUSION-1
       host: 192.168.1.99
-      templates: [fusion-dhcp-dns]
+      templates: [fusion-dns]
       configuration:
         system:
           hostname: FUSION-1
@@ -76,14 +75,3 @@ iosxe:
                 neighbors:
                   - ip: 10.0.1.2
                   - ip: 10.0.2.2
-
-        # DHCP for the CORP VLAN 100 clients (edge relays with option 82).
-        dhcp_pools:
-          - name: CORP-VLAN-100
-            network_number: 10.254.100.0
-            network_mask: 255.255.255.0
-            default_routers: [10.254.100.1]
-            dns_servers: [192.168.1.99]
-            domain_name: ccie.local
-            lease_days: 0
-            lease_hours: 12

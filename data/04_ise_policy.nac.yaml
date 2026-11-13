@@ -1,8 +1,8 @@
 ---
-# Stage 4: micro-segmentation and identity on ISE (nac-ise). Tasks 19-23.
-# Policy stays on ISE (not migrated to Catalyst Center GBAC); see WORKBOOK Task 18.
+# Stage 4: micro-segmentation and identity on ISE (nac-ise). Tasks 24-28.
+# Policy stays on ISE (not migrated to Catalyst Center GBAC); see WORKBOOK Task 23.
 ise:
-  # Task 19: SGT policy matrix. Employees / Contractors / Developers are ISE's built-in SGTs,
+  # Task 24: SGT policy matrix. Employees / Contractors / Developers are ISE's built-in SGTs,
   # and Permit IP / Deny IP are built-in SGACLs, so they are referenced here, not created.
   trust_sec:
     # Contractors is denied to and from everyone, itself included; everything else is permitted.
@@ -18,13 +18,13 @@ ise:
       - { source_sgt: Developers, destination_sgt: Developers, sgacl_name: Permit IP }
 
   identity_management:
-    # Task 20: user identity groups
+    # Task 25: user identity groups
     user_identity_groups:
       - name: SDA_Employees
       - name: SDA_Contractors
       - name: SDA_Developers
 
-    # Task 21: local users. One lab password for all of them, from .env (ISE_LAB_USER_PASSWORD).
+    # Task 26: local users. One lab password for all of them, from .env (ISE_LAB_USER_PASSWORD).
     internal_users:
       - name: bob
         password: !env ISE_LAB_USER_PASSWORD
@@ -49,23 +49,35 @@ ise:
 
   network_access:
     policy_elements:
-      # Task 22: Access-Accept with VLAN 100 (VLAN name on the edges is VLAN_100, from Task 17)
+      # Task 27: Access-Accept with VLAN 100 (VLAN name on the edges is VLAN_100, from Task 21)
       authorization_profiles:
         - name: SDA_VLAN100
           access_type: ACCESS_ACCEPT
           vlan_name_id: VLAN_100
           vlan_tag_id: 1
 
-    # Task 23: policy set for wired 802.1X: authenticate against Internal Users,
-    # authorize by identity group, return VLAN 100 plus the group's SGT.
+    # Task 28: policy set for wired access: 802.1X users authenticate against Internal Users and
+    # are authorized by identity group (VLAN 100 plus the group's SGT). Wired MAB is matched here
+    # too and rejected, so it never falls through to the Default policy set, whose factory MAB
+    # rule (user not found: CONTINUE) would end in PermitAccess.
     policy_sets:
       - name: SDA-Campus
-        description: SD-Access fabric wired 802.1X
+        description: SD-Access fabric wired access
         service_name: Default Network Access
         condition:
-          type: ConditionReference
-          name: Wired_802.1X
+          type: ConditionOrBlock
+          children:
+            - type: ConditionReference
+              name: Wired_802.1X
+            - type: ConditionReference
+              name: Wired_MAB
         authentication_rules:
+          - name: MAB
+            condition:
+              type: ConditionReference
+              name: Wired_MAB
+            identity_source_name: Internal Endpoints
+            if_user_not_found: REJECT
           - name: Default
             identity_source_name: Internal Users
         authorization_rules:

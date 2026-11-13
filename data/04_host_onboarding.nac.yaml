@@ -1,0 +1,25 @@
+---
+# Stage 4, Task 29: host onboarding. The workstation ports on the edges get the fabric site's
+# authentication template (Closed Authentication, 802.1X) and the CORP data VLAN.
+# Merged by name with the fabric site and edge devices in data/03_fabric.nac.yaml.
+catalyst_center:
+  fabric:
+    fabric_sites:
+      - name: Global/USA/SDA-Campus
+        fabric_devices:
+          - name: HQ-EDGE-1
+            port_assignments:
+              interfaces:
+                - interface_name: GigabitEthernet1/0/7
+                  connected_device_type: USER_DEVICE
+                  data_vlan_name: VLAN_100
+                  authenticate_template_name: Closed Authentication
+                  interface_description: WS-1-bob
+          - name: HQ-EDGE-2
+            port_assignments:
+              interfaces:
+                - interface_name: GigabitEthernet1/0/7
+                  connected_device_type: USER_DEVICE
+                  data_vlan_name: VLAN_100
+                  authenticate_template_name: Closed Authentication
+                  interface_description: WS-2-joe

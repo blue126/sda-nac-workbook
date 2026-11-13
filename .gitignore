@@ -7,3 +7,4 @@ crash.log
 *.tfplan
 .claude/
 .DS_Store
+LAB-NOTES.md

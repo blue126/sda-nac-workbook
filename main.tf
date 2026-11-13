@@ -64,11 +64,11 @@ locals {
   # Files per stage. nac-catalystcenter, nac-iosxe and nac-ise each need their own files
   # (a YAML file may hold only one of catalyst_center / iosxe / ise).
   stages = [
-    { catc = [], iosxe = ["data/00_fusion.nac.yaml"], ise = [] },                                  # Stage 0
-    { catc = ["data/01_sites_pools.nac.yaml"], iosxe = [], ise = [] },                             # Stage 1
-    { catc = ["data/02_aaa_devices.nac.yaml"], iosxe = [], ise = [] },                             # Stage 2
-    { catc = ["data/03_fabric.nac.yaml"], iosxe = ["data/03_fusion_handoff.nac.yaml"], ise = [] }, # Stage 3
-    { catc = [], iosxe = [], ise = ["data/04_ise_policy.nac.yaml"] },                              # Stage 4
+    { catc = [], iosxe = ["data/00_fusion.nac.yaml"], ise = [] },                                       # Stage 0
+    { catc = ["data/01_sites_pools.nac.yaml"], iosxe = [], ise = [] },                                  # Stage 1
+    { catc = ["data/02_aaa_devices.nac.yaml"], iosxe = [], ise = [] },                                  # Stage 2
+    { catc = ["data/03_fabric.nac.yaml"], iosxe = ["data/03_fusion_handoff.nac.yaml"], ise = [] },      # Stage 3
+    { catc = ["data/04_host_onboarding.nac.yaml"], iosxe = [], ise = ["data/04_ise_policy.nac.yaml"] }, # Stage 4
   ]
   catc_files  = flatten([for s in slice(local.stages, 0, var.stage + 1) : s.catc])
   iosxe_files = flatten([for s in slice(local.stages, 0, var.stage + 1) : s.iosxe])

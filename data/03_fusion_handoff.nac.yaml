@@ -1,6 +1,6 @@
 ---
 # Stage 3, read by the nac-iosxe module (a file may hold only one of iosxe / catalyst_center).
-# Task 16, fusion side of the L3 handoff: sub-interfaces and eBGP peerings on FUSION-1.
+# Task 20, fusion side of the L3 handoff: sub-interfaces and eBGP peerings on FUSION-1.
 # Addresses must match local_ip_address (border) / peer_ip_address (fusion) in
 # data/03_fabric.nac.yaml.
 # The fusion side is not VRF-aware: all global routes are leaked into the CORP VN.
