@@ -1,6 +1,6 @@
 # SD-Access Lab Workbook（Network as Code 版）
 
-用 Catalyst Center + ISE 搭一个 SD-Access fabric。CatC 上的配置（Task 10 起）不点 GUI，用 Terraform 模块 `netascode/nac-catalystcenter` 0.6.0 加 YAML 下发；CatC 管不到的 fusion（Catalyst 8000V）用 `netascode/nac-iosxe` 模块。任务按 NaC 的阶段排列：每个阶段一个配置文件、一次 apply。**所有参数以现网为准**。拓扑参考 Mason Reimert 的 SDA workbook v1.0。
+用 Catalyst Center + ISE 搭一个 SD-Access fabric。CatC 上的配置（Task 10 起）不点 GUI，用 Terraform 模块 `netascode/nac-catalystcenter` 0.6.0 加 YAML 下发；CatC 管不到的 fusion（Catalyst 8000V）用 `netascode/nac-iosxe` 模块。任务按 NaC 的阶段排列：每个阶段一个配置文件、一次 apply。地址、主机名和参数都按本手册的规划来，照着做就能得到同样的结果。拓扑参考 Mason Reimert 的 SDA workbook v1.0。
 
 状态：✅ 完成 ⏳ 进行中 ⬜ 未开始
 
@@ -62,7 +62,7 @@ flowchart TB
 | 项 | 值 |
 |---|---|
 | 仿真平台 | PNETLab，lab 文件 `/opt/unetlab/labs/sda-workbook/sda-workbook-catc323.unl`；仓库副本 [lab/sda-workbook-catc323.unl](lab/sda-workbook-catc323.unl)（交换机启动配置里的 enable secret 是 `cisco`） |
-| 镜像 | 交换机 `cat9kvuadp-17.15.03`（4 vCPU / 18 GB）；FUSION-1 `c8000v-17.16.01a`（2 vCPU / 4 GB）；客户端 `linux-ubuntu-server-20.04`（需自备镜像；默认登录 `root` / `root`；console 默认是 VNC，Task 31 第 0 步改成串口 telnet） |
+| 镜像 | 交换机 `cat9kvuadp-17.15.03`（4 vCPU / 18 GB）；FUSION-1 `c8000v-17.16.01a`（2 vCPU / 4 GB）；客户端 `linux-ubuntu-server-20.04`（需自备镜像；默认登录 `root` / `root`；镜像默认用 VNC console（文本 tty，没有剪贴板），lab 文件里已经改成串口 telnet，见 Task 31 第 0 步） |
 | Catalyst Center | 3.2.3 |
 | ISE | 3.3.0，主机名 `ise.ccie.local`（standalone，PAN/MnT/PSN/pxGrid 同一节点） |
 | 域名 | `ccie.local`。DNS 服务器上要有 ISE 的 A 记录，CatC 集成 ISE 时用 FQDN（Task 12） |
@@ -104,7 +104,7 @@ flowchart TB
 | 文件 | 作用 |
 |---|---|
 | `main.tf` | 连接 CatC 的 provider；调用两个 NaC 模块（CatC 和 FUSION-1）并告诉它们读哪些 YAML（由变量 `stage` 控制，见「怎么分」） |
-| `data/0N_*.nac.yaml` | 每个阶段的 YAML：`catalyst_center:` 开头的给 nac-catalystcenter，`iosxe:` 开头的（`00_fusion`、`03_fusion_handoff`）给 nac-iosxe。一个文件只能有其中一种 |
+| `data/0N_*.nac.yaml` | 每个阶段的 YAML：`catalyst_center:` 开头的给 nac-catalystcenter，`iosxe:` 开头的（`00_fusion`、`03_fusion_handoff`）给 nac-iosxe，`ise:` 开头的（`04_ise_policy`）给 nac-ise。一个文件只能有其中一种 |
 | `.env.example` | 所有密码的模板；复制成 `.env` 再填（已 gitignore），运行 Terraform 前 `source` |
 | `terraform.tfvars.example` | 非敏感参数（CatC 地址），可选 |
 | `lab/` | PNETLab 拓扑文件 |
@@ -155,7 +155,7 @@ Terraform 按资源之间的依赖排顺序，没有依赖的资源并行创建�
 
 | Stage | Task | 配置文件 | Plan 文件 |
 |---|---|---|---|
-| Stage 0 | Task 1–6 underlay 与纳管；Task 7 FUSION-1；Task 8 构建 | 交换机上手工 CLI；FUSION-1 用 `data/00_fusion.nac.yaml`（nac-iosxe） | `stage0.tfplan` |
+| Stage 0 | Task 0 实验准备；Task 1–6 underlay 与纳管；Task 7 FUSION-1；Task 8 构建 | underlay 在 lab 启动配置里，Task 5 手工 CLI，Task 6 CatC GUI；FUSION-1 用 `data/00_fusion.nac.yaml`（nac-iosxe） | `stage0.tfplan` |
 | Stage 1 | Task 9 CatC 应用包（GUI）；Task 10 网络层级、Task 11 地址池、Task 12 集成 ISE；Task 13 构建 | `data/01_sites_pools.nac.yaml` | `stage1.tfplan` |
 | Stage 2 | Task 14 AAA、Task 15 设备分配和 provision；Task 16 构建 | `data/02_aaa_devices.nac.yaml` | `stage2.tfplan` |
 | Stage 3 | Task 17–21 transit、VN、fabric site、设备角色、anycast gateway；Task 22 构建 | `data/03_fabric.nac.yaml` + `data/03_fusion_handoff.nac.yaml`（fusion 一侧） | `stage3.tfplan` |
@@ -187,19 +187,87 @@ terraform plan -var stage=N                      # 4. 确认 No changes
 
 ## Stage 0 – Underlay、设备纳管与 FUSION-1（CLI / NaC）
 
+Task 2–4 的交换机配置（IS-IS、border 上的 BGP 和重分发）已经写在 lab 文件的启动配置里：导入 [lab/sda-workbook-catc323.unl](lab/sda-workbook-catc323.unl)、第一次启动交换机，underlay 就是建好的状态。下面逐段讲解这些配置，并给出验证方法。Task 5 是纳管前的准备，要在每台交换机上手工做。
+
+### ✅ Task 0 – 实验准备
+
+**目标**：开始 Task 1 之前，lab 文件之外的组件都就位，按顺序启动并确认互通。
+
+**lab 文件里有的**：6 台 Cat9000v、FUSION-1、两台 Ubuntu 客户端、NET-SVC，以及它们之间的连线和两个 cloud（LAN 接 192.168.1.0/24，NAT 给客户端上网）。交换机的启动配置里已经有 underlay（Task 2–4）。
+
+**要自己准备的**：
+
+| 组件 | 要求 |
+|---|---|
+| PNETLab 主机 | 192.168.1.251，本实验是 27H1 v8.2；LAN cloud 桥接到 192.168.1.0/24 |
+| PNETLab 镜像 | `cat9kvuadp-17.15.03`、`c8000v-17.16.01a`、`linux-ubuntu-server-20.04`（需自备）；Net Services 的 Docker 镜像在 Task 11 附录里装 |
+| Catalyst Center | 3.2.3，装好并能登录 GUI，地址 192.168.1.133 |
+| ISE | 3.3，standalone，地址 192.168.1.221，主机名和域名的要求见 Task 12 |
+| 网关 192.168.1.1 | 上网和 DNS；DNS 上要有 `ise.ccie.local` 的 A 记录（Task 12） |
+| 自己的电脑 | 能访问 192.168.1.0/24；装好 Terraform（≥ 1.15）、git、telnet 客户端；克隆本仓库 |
+
+**顺序**：
+
+1. 先开 CatC 和 ISE，它们启动最慢，等 GUI 能登录。
+2. 在 PNETLab 主机上打 Net Services 需要的补丁（Task 11 附录「默认：PNETLab Net Services」第 2 步）。这一步要重启 PNETLab 的 broker，在 lab 节点启动之前做。
+3. PNETLab → Import，导入 [lab/sda-workbook-catc323.unl](lab/sda-workbook-catc323.unl)。
+4. 启动 FUSION-1 和 6 台交换机。客户端和 NET-SVC 可以等到 Task 11、Task 31 再开。
+
+**验证**：
+
+```bash
+ping -c 3 192.168.1.133              # CatC
+ping -c 3 192.168.1.221              # ISE
+dig +short ise.ccie.local @192.168.1.1   # 192.168.1.221
+```
+
+交换机 console 能连上（端口在 PNETLab 节点右键菜单的 Console 里看），提示符是 `HQ-BCP-1#` 这类主机名，说明启动配置已经加载。
+
 ### ✅ Task 1 – 数据中心路由
 
-**目标**：共享服务网段能被 fusion 学到。
+**目标**：共享服务网段（CatC、ISE 所在的 192.168.1.0/24）和 fabric 之间互相可达。
 
-共享服务（CatC、ISE）直接在管理网段 192.168.1.0/24，FUSION-1 Gi1 接入，默认路由指向 192.168.1.1，BGP 里宣告 192.168.1.0/24。fusion 一侧的配置在 Task 7 的 `data/00` 里。
+共享服务直接在管理网段上。FUSION-1 的 Gi1 接入这个网段，默认路由指向 192.168.1.1，并在 BGP 里把 192.168.1.0/24 宣告给 border。这些都是 FUSION-1 上的配置，在 Task 7 的 `data/00` 里，交换机上不用配。
+
+回程方向：管理网段的网关（192.168.1.1）上没有去 fabric 的路由，所以 CatC 和 ISE 各自加两条经 FUSION-1 的静态路由，分别去交换机的 Loopback0（RLOC）和客户端地址：
+
+| 目的 | 下一跳 |
+|---|---|
+| 9.9.9.0/24 | 192.168.1.99 |
+| 10.254.0.0/16 | 192.168.1.99 |
+
+ISE 在 CLI 的 config 模式里加：
+
+```text
+ise/admin(config)# ip route 9.9.9.0 255.255.255.0 gateway 192.168.1.99
+ise/admin(config)# ip route 10.254.0.0 255.255.0.0 gateway 192.168.1.99
+```
+
+CatC 的静态路由在安装向导（maglev configuration wizard）里给接入 192.168.1.0/24 的那块网卡配置；装好之后要改，用 `sudo maglev-config update` 重新走向导。
+
+> [!NOTE]
+> 9.9.9.0/24 是公网地址段（Quad9 DNS 就在里面），本实验的 RLOC 用的就是这一段。CatC 和 ISE 上有这条更具体的静态路由，所以不会走到公网；但在没有这条路由的机器上 ping 9.9.9.x 也会通，那是公网的回应，不代表能到 fabric。
 
 ### ✅ Task 2 – Fusion 路由
 
 **目标**：Fusion（AS 650002）和两台 border（AS 650003）在 GRT 建 eBGP，只做 underlay 可达，不涉及 overlay VN。
 
-fusion 一侧由 Task 7 的 `data/00` 下发；border 一侧（`router bgp 650003`，邻居 10.0.1.1 / 10.0.2.1）在 border 上手工 CLI。
+fusion 一侧由 Task 7 的 `data/00` 下发。border 一侧在启动配置里（HQ-BCP-2 的邻居是 10.0.2.1，宣告 9.9.9.12）：
 
-**验证**：两个邻居 Established。
+```text
+router bgp 650003
+ bgp router-id interface Loopback0
+ bgp log-neighbor-changes
+ neighbor 10.0.1.1 remote-as 650002
+ address-family ipv4
+  network 9.9.9.11 mask 255.255.255.255
+  neighbor 10.0.1.1 activate
+ exit-address-family
+```
+
+border 到 fusion 的链路是 Gi1/0/1 trunk 加 Vlan1（10.0.1.2 / 10.0.2.2），也在启动配置里。
+
+**验证**（Task 7 FUSION-1 配好之后）：两个邻居 Established。
 
 ```text
 FUSION-1# show ip bgp summary
@@ -210,6 +278,24 @@ FUSION-1# show ip bgp summary
 **目标**：所有 fabric 内链路和 Loopback0 跑 IS-IS，loopback 全互通。
 
 **原理**：SD-Access 的 underlay 只要求 RLOC（Loopback0 /32）可达、MTU 足够（VXLAN 多 50 字节）。IS-IS 是 LAN Automation 默认用的协议，不依赖 IP 就能起邻居。
+
+6 台都是同一个模式：NET 的系统 ID 取 Loopback0 的最后一段（9.9.9.31 → `0000.0000.0031`），Loopback0 和每条 fabric 链路上开 IS-IS，链路是点到点。以 HQ-EDGE-1 为例：
+
+```text
+interface Loopback0
+ ip address 9.9.9.31 255.255.255.255
+ ip router isis
+interface GigabitEthernet1/0/1
+ description TO-HQ-IN-1
+ no switchport
+ ip address 172.17.11.2 255.255.255.0
+ ip router isis
+ isis network point-to-point
+router isis
+ net 49.0001.0000.0000.0031.00
+ metric-style wide
+ log-adjacency-changes
+```
 
 **验证**：IS-IS 邻居都是 Up；从任意节点 ping 其他节点的 Loopback0（9.9.9.x）都通。
 
@@ -222,6 +308,16 @@ HQ-EDGE-1# ping 9.9.9.11 source Loopback0
 
 **目标**：border 上 IS-IS ↔ BGP 双向重分发，并把 border 自己的 loopback 宣告进 BGP（它们是本地直连，不会经 IS-IS 重分发出来）。
 
+border 的启动配置里，在 Task 2、Task 3 的基础上多了这两行（宣告 loopback 的 `network` 已经在 Task 2 里）：
+
+```text
+router isis
+ redistribute bgp 650003
+router bgp 650003
+ address-family ipv4
+  redistribute isis level-1-2
+```
+
 **验证**：从 edge 的 Loopback0 ping 通 CatC 和 ISE。
 
 ```text
@@ -231,20 +327,58 @@ HQ-EDGE-1# ping 192.168.1.221 source Loopback0
 
 ### ✅ Task 5 – 设备引导
 
-**目标**：让 CatC 能纳管 BCP / EDGE 节点。每台配置：
+**目标**：让 CatC 能纳管 fabric 节点：SNMP、本地最高权限账号 `dna` / `ISEisC00L`、VTY 只允许 SSH、NETCONF。hostname 和 `ip domain name ccie.local` 已经在启动配置里。
 
-- SNMP RW community
-- `aaa new-model`，exec authorization 方法列表
-- 本地最高权限用户（用户名、密码见 Bitwarden，**不写进本文件**）
-- VTY 只允许 SSH、本地认证、privilege 15
-- `netconf-yang`
-- hostname，`ip domain name ccie.local`
+在 6 台交换机（BCP、IN、EDGE）的 console 上各粘贴一次：
+
+```text
+configure terminal
+username dna privilege 15 secret ISEisC00L
+aaa new-model
+aaa authentication login default local
+aaa authentication login CONSOLE none
+aaa authorization exec default local
+line con 0
+ login authentication CONSOLE
+line vty 0 15
+ privilege level 15
+ transport input ssh
+exit
+crypto key generate rsa modulus 2048
+ip ssh version 2
+snmp-server community cisco RO
+netconf-yang
+end
+write memory
+```
+
+- 先建账号再开 AAA；`CONSOLE` 方法列表让 console 继续免登录，否则开了 `aaa new-model` 之后 console 也要输账号。
+- `crypto key generate` 要跑一会儿，后面几行可能落在 exec 模式里报错，跑完再补。
+- CatC Discovery 只需要 SNMP 读权限，所以 community 是 RO。
+
+**验证**：在一台交换机上用 `dna` SSH 到另一台的 Loopback0，NETCONF 是 running。
+
+```text
+HQ-BCP-1# ssh -l dna 9.9.9.31
+HQ-BCP-1# show netconf-yang status
+```
 
 ### ✅ Task 6 – 发现设备
 
-**目标**：用 CatC Discovery 把 fabric 设备加入 inventory，勾选 NETCONF。
+**目标**：用 CatC Discovery 把 6 台交换机加入 inventory。
 
-**现网**：六台都在 inventory 里（BCP-1/2、IN-1/2、EDGE-1/2）。
+CatC → Provision → Inventory → Add Device → Discovery，按下表新建一次 discovery：
+
+| 字段 | 值 |
+|---|---|
+| Discovery Type | IP Address/Range |
+| IP 范围 | `9.9.9.11` – `9.9.9.32` |
+| Preferred Management IP | Use Loopback |
+| CLI | 用户名 `dna`，密码 `ISEisC00L`，enable 密码 `cisco` |
+| SNMPv2c Read | community `cisco` |
+| NETCONF | 端口 830 |
+
+**验证**：Inventory 里 6 台（HQ-BCP-1/2、HQ-IN-1/2、HQ-EDGE-1/2）都是 Reachable、Managed，设备名带域名（例如 `HQ-BCP-1.ccie.local`，Task 15 按这个名字找设备）。
 
 ### ✅ Task 7 – FUSION-1（Catalyst 8000V，nac-iosxe）
 
@@ -479,27 +613,40 @@ edge 插入的 option 82 有两个子选项：Circuit-ID（子选项 1）里是 
 
 本实验用 PNETLab 自带的 Net Services；下面另给两种备选。dnsmasq（Net Services 和备选 A 都是它）和 IOS 的 DHCP server 都实测过会原样带回 option 82。
 
-> [!NOTE]
-> 改了地址池的 DHCP server 之后，CatC 只更新地址池对象，不会自动把 edge 上的 `ip helper-address` 改掉。要再「Reconfigure Fabric Site」（GUI：Provision → SD-Access → Fabric Sites）；NaC 里是在 fabric site 下临时加 `reconfigure: true`，模块会建一个 `catalystcenter_apply_pending_fabric_events`，apply 之后 edge 上的 helper 才会变（1–2 分钟）。确认两台 edge 都变了之后删掉这一行再 apply 一次，这个资源只从 state 里删掉。如果它几秒就结束、helper 没变，说明 CatC 还没生成待处理的事件，等半分钟后加上 `-replace='module.catalyst_center.catalystcenter_apply_pending_fabric_events.fabric_pending_events["Global/USA/SDA-Campus"]'` 再跑一次。按本 Task 的顺序从头建，Stage 1 建地址池时 DHCP server 就已经是 192.168.1.98，不需要这一步。
-
 ##### 默认：PNETLab Net Services
 
 Net Services 是 PNETLab 的 Docker 节点（镜像 `rspnet/pnet-services`，里面是 dnsmasq，带 Web 管理界面）。它的 DHCP scope 有 giaddr 字段，专门服务 `ip helper-address` 后面的客户端。在 Task 31 之前做好即可。
 
 1. **装镜像**：PNETLab → Docker Devices → Net Services → Install。
-2. **给模板加 NET_ADMIN**（PNETLab 8.2；在 PNETLab 主机上做一次）。dnsmasq 开 DHCP 必须有 NET_ADMIN，而 PNETLab 的 broker 只按模板 YAML 给容器加权限，节点设置里的 Docker options 不生效：
+2. **给模板加 NET_ADMIN**（在 PNETLab 主机上做一次；在 PNETLab 27H1 v8.2、软件包 `pnetlab` 6.8.62 上验证过）。dnsmasq 开 DHCP 必须有 NET_ADMIN，而 PNETLab 的 broker 只按模板 YAML 给容器加权限，节点设置里的 Docker options 不生效：
+
+   先确认要改的那一行存在（应输出一行；没有输出说明版本不同，不要照抄下面的命令）：
+
+   ```bash
+   sudo grep -n 'gui = not dock_args and not isinstance(tpl.get("docker"), dict)' /opt/unetlab/scripts/pnetlab-brokerd.py
+   ```
+
+   然后备份、修改、重启 broker：
 
    ```bash
    sudo cp -p /opt/unetlab/scripts/pnetlab-brokerd.py /opt/unetlab/scripts/pnetlab-brokerd.py.bak
+   sudo cp -p /opt/unetlab/html/templates/intel/services.yml /opt/unetlab/scripts/services.yml.bak
    sudo sed -i 's/gui = not dock_args and not isinstance(tpl.get("docker"), dict)/gui = not dock_args/' /opt/unetlab/scripts/pnetlab-brokerd.py
-   printf 'docker:\n  cap_add: [NET_ADMIN]\n' | sudo tee -a /opt/unetlab/html/templates/intel/services.yml
+   grep -q '^docker:' /opt/unetlab/html/templates/intel/services.yml || printf 'docker:\n  cap_add: [NET_ADMIN]\n' | sudo tee -a /opt/unetlab/html/templates/intel/services.yml
    sudo systemctl restart pnetlab-brokerd
    ```
 
    - 第一处改的是 broker 判断「GUI 类 Docker 节点」的条件。原版只要模板里有 `docker:` 块，就不再发布 console 端口，Net Services 的 HTTP 管理界面会打不开；改成只看 `dock_args`。PNETLab 自带的模板没有用 `docker:` 块的，其他节点不受影响。
    - `NET_ADMIN` 在 broker 的免签名允许名单里，不需要 `pnetlab-template-sign`。AMD 主机改 `templates/amd/services.yml`。
    - 重启 broker 会断开正在运行的节点的 console 转发，所以在 lab 节点都停着的时候做。升级 pnetlab 软件包后这两处可能被覆盖，要重新做。
-3. **加节点**：lab 里 Add node → Net Services，按下表填，eth1 连到 LAN cloud，然后 Start。
+   - 恢复原样：
+
+     ```bash
+     sudo cp -p /opt/unetlab/scripts/pnetlab-brokerd.py.bak /opt/unetlab/scripts/pnetlab-brokerd.py
+     sudo cp -p /opt/unetlab/scripts/services.yml.bak /opt/unetlab/html/templates/intel/services.yml
+     sudo systemctl restart pnetlab-brokerd
+     ```
+3. **节点**：仓库里的 lab 文件已经带有 NET-SVC 节点，设置如下表，eth1 接在 LAN cloud 上，导入后直接 Start。自己从空白 lab 搭的话，Add node → Net Services 按表填。
 
    | 字段 | 值 |
    |---|---|
@@ -517,7 +664,7 @@ Net Services 是 PNETLab 的 Docker 节点（镜像 `rspnet/pnet-services`，里
    sudo docker inspect docker21 --format '{{.HostConfig.CapAdd}}'   # [CAP_NET_ADMIN]
    ```
 
-4. **建 scope**：打开节点的 console（HTTP，本实验是 `http://192.168.1.251:30021`，登录 `admin` / `pnet`）→ DHCP → Add scope：
+4. **建 scope**：打开节点的 console（HTTP，登录 `admin` / `pnet`；本实验是 `http://192.168.1.251:30021`，端口由 PNETLab 分配，在节点右键菜单的 Console 里看）→ DHCP → Add scope：
 
    | 字段 | 值 |
    |---|---|
@@ -563,11 +710,17 @@ systemctl restart dnsmasq
 
 - `port=0` 关掉 DNS，避免和 systemd-resolved 抢 53 端口。
 - 只有 10.254.100.0/24 一个地址池，所以 192.168.1.0/24 上本地广播的 DHCP 请求它不会回应，不会和网关的 DHCP 冲突。
-- 地址池改成 `dhcp_servers: [192.168.1.97]`，再按上面的 NOTE 让 helper 生效。`journalctl -u dnsmasq` 里能看到 `DHCPACK(eth0) 10.254.100.x`；用 `tcpdump -n -v -i eth0 udp port 67` 可以看到 OFFER / ACK 里带回的 `Agent-Information Option 82`。
+- 地址池改成 `dhcp_servers: [192.168.1.97]`，再按下面「中途更换 DHCP 服务器」让 helper 生效。`journalctl -u dnsmasq` 里能看到 `DHCPACK(eth0) 10.254.100.x`；用 `tcpdump -n -v -i eth0 udp port 67` 可以看到 OFFER / ACK 里带回的 `Agent-Information Option 82`。
 
 ##### 备选 B：家用路由器的 DHCP
 
-条件是上面三条都要满足：路由器的 DHCP 能为不在自己 LAN 上的网段（10.254.100.0/24）建地址池、接受 relay 过来的请求、带回 option 82，并且能加静态路由 10.254.100.0/24 → 192.168.1.99。多数家用固件的 DHCP 只服务自己的 LAN，做不到；OpenWrt 这类底层就是 dnsmasq 的固件，可以按备选 A 的 `dhcp-range` / `dhcp-option` 配置。本实验没有验证过这种做法。地址池改成 `dhcp_servers: [192.168.1.1]`，再按 NOTE 让 helper 生效。
+条件是上面三条都要满足：路由器的 DHCP 能为不在自己 LAN 上的网段（10.254.100.0/24）建地址池、接受 relay 过来的请求、带回 option 82，并且能加静态路由 10.254.100.0/24 → 192.168.1.99。多数家用固件的 DHCP 只服务自己的 LAN，做不到；OpenWrt 这类底层就是 dnsmasq 的固件，可以按备选 A 的 `dhcp-range` / `dhcp-option` 配置。本实验没有验证过这种做法。地址池改成 `dhcp_servers: [192.168.1.1]`，再按下面「中途更换 DHCP 服务器」让 helper 生效。
+
+##### 中途更换 DHCP 服务器
+
+按本手册的顺序从头建，Stage 1 建地址池时 DHCP server 就已经是 192.168.1.98，用不到这一节。只有建好之后再换服务器（比如改用备选 A / B）时才需要：
+
+改了地址池的 DHCP server 之后，CatC 只更新地址池对象，不会自动把 edge 上的 `ip helper-address` 改掉。要再「Reconfigure Fabric Site」（GUI：Provision → SD-Access → Fabric Sites）；NaC 里是在 fabric site 下临时加 `reconfigure: true`，模块会建一个 `catalystcenter_apply_pending_fabric_events`，apply 之后 edge 上的 helper 才会变（1–2 分钟）。确认两台 edge 都变了之后删掉这一行再 apply 一次，这个资源只从 state 里删掉。如果它几秒就结束、helper 没变，说明 CatC 还没生成待处理的事件，等半分钟后加上 `-replace='module.catalyst_center.catalystcenter_apply_pending_fabric_events.fabric_pending_events["Global/USA/SDA-Campus"]'` 再跑一次。
 
 ### ✅ Task 12 – 集成 ISE
 
@@ -842,7 +995,7 @@ catalyst_center:
                         vlan: 101
                         local_ip_address: 10.254.251.1/30   # border
                         peer_ip_address: 10.254.251.2/30    # fusion
-          # HQ-BCP-2 同上，VLAN 102、Handoff-2
+          # HQ-BCP-2 同上，VLAN 102、Handoff-2（完整内容见 data/03_fabric.nac.yaml）
           - name: HQ-EDGE-1
             fabric_roles: [EDGE_NODE]
 ```
@@ -1011,8 +1164,8 @@ ise:
 |---|---|---|
 | bob | SDA_Employees | WS-1-bob |
 | joe | SDA_Contractors | WS-2-joe |
-| susan | SDA_Contractors | `[现网无此客户端]` |
-| kim | SDA_Developers | `[现网无此客户端]` |
+| susan | SDA_Contractors | 本实验没有对应的客户端 |
+| kim | SDA_Developers | 本实验没有对应的客户端 |
 
 ```yaml
     internal_users:
@@ -1075,7 +1228,7 @@ ise:
               attribute_value: User Identity Groups:SDA_Employees
             profiles: [SDA_VLAN100]
             security_group: Employees
-          # Contractors、Developers 同上
+          # Contractors、Developers 同上（完整内容见 data/04_ise_policy.nac.yaml）
           - name: Default
             profiles: [DenyAccess]
 ```
@@ -1104,7 +1257,7 @@ catalyst_center:
                   data_vlan_name: VLAN_100
                   authenticate_template_name: Closed Authentication
                   interface_description: WS-1-bob
-          # HQ-EDGE-2 同上，WS-2-joe
+          # HQ-EDGE-2 同上，WS-2-joe（完整内容见 data/04_host_onboarding.nac.yaml）
 ```
 
 Task 30 apply 后，edge 的 Gi1/0/7 上应有 `switchport access vlan 100` 和 `source template DefaultWiredDot1xClosedAuth`：
@@ -1145,9 +1298,7 @@ HQ-EDGE-1# show access-session
 
 客户端是 Ubuntu，在 console 上手工做，默认以 `root` / `root` 登录：
 
-0. （可选）把 WS-1-bob 的 console 换成串口（telnet）。这一步不是 802.1X 必需的，只是为了能用终端软件访问：镜像默认用 VNC console，进的是文本 tty，没有剪贴板，配置文件只能手敲；换成串口后就是普通终端，可以复制粘贴。不换的话，下面的命令在 VNC console 里手敲也一样。
-
-   在 PNETLab 上停掉 WS-1-bob → Edit → Console 改成 `telnet` → 启动。之后在自己的电脑上登录（30017 是 PNETLab 给 WS-1-bob 分配的 console 端口）：
+0. 连上客户端的 console。仓库 lab 文件里两台客户端的 console 已经设成 telnet（串口），用终端软件连上就是普通终端，可以复制粘贴。端口是 PNETLab 给节点分配的，本实验 WS-1-bob 是 30017；你的环境可能不同，在节点右键菜单的 Console 打开的 `telnet://192.168.1.251:<端口>` 里看：
 
    ```bash
    telnet 192.168.1.251 30017
@@ -1220,7 +1371,7 @@ HQ-EDGE-1# show access-session
 
    - 如果 802.1X 认证和授权还没完成，前几个 DISCOVER 不会有回应：这时端口只放 EAPoL，DHCP 包被丢弃。
    - OFFER 的来源是 10.254.100.1，也就是 edge 上的 anycast gateway。edge 作为 relay，把请求转给 NET-SVC 上的 DHCP server。
-5. 在 WS-2-joe 上重复第 0–4 步：第 0 步的 console 端口是 30018，第 3 步的 `identity` 换成 `joe`。
+5. 在 WS-2-joe 上重复第 0–4 步：第 0 步的 console 端口换成 WS-2-joe 的（本实验是 30018），第 3 步的 `identity` 换成 `joe`。
 
 ### ✅ Task 32 – 验证
 

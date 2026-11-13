@@ -45,8 +45,8 @@ catalyst_center:
             longitude: -121.95
             network_settings:
               ip_pools_reservations:
-                # Anycast gateway pool for VLAN 100. DHCP and DNS (forwarder to 192.168.1.1)
-                # run on FUSION-1 e0/0, i.e. shared services outside the fabric, reached via the L3 handoff.
+                # Anycast gateway pool for VLAN 100. DHCP on NET-SVC (PNETLab Net Services, 192.168.1.98);
+                # DNS forwarded by FUSION-1 (192.168.1.99). Both are outside the fabric, reached via the L3 handoff.
                 - name: SDA-Campus-VLAN-100
                   global_pool: SDA-Campus
                   subnet: 10.254.100.0
